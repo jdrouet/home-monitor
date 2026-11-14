@@ -20,4 +20,8 @@ pub enum ConfigError {
     DuplicateMac(MacAddress),
     #[error("room {0} has more than one thermometer")]
     DuplicateRoom(RoomName),
+    #[error("weather latitude {0} is outside -90 to 90")]
+    InvalidLatitude(f64),
+    #[error("weather longitude {0} is outside -180 to 180")]
+    InvalidLongitude(f64),
 }

@@ -18,6 +18,12 @@ store_url = "http://store:8080"
 http_listen = "0.0.0.0:8080"
 ntfy_url = "http://ntfy"
 
+[weather_collector]
+http_listen = "0.0.0.0:8080"
+# Outdoor weather location (Open-Meteo), in decimal degrees.
+latitude = 48.8566
+longitude = 2.3522
+
 # Thermometers are matched by Bluetooth MAC address.
 [[thermometers]]
 mac = "A4:C1:38:1C:02:76" # ATC_1C0276

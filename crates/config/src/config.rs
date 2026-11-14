@@ -21,6 +21,7 @@ pub struct Config {
     pub store: StoreConfig,
     pub dashboard: DashboardConfig,
     pub alerter: AlerterConfig,
+    pub weather_collector: Option<WeatherCollectorConfig>,
     pub thermometers: Vec<Thermometer>,
 }
 
@@ -58,6 +59,26 @@ pub struct AlerterConfig {
     pub ntfy_url: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WeatherCollectorConfig {
+    pub http_listen: SocketAddr,
+    pub latitude: f64,
+    pub longitude: f64,
+}
+
+impl WeatherCollectorConfig {
+    fn validate(&self) -> Result<(), ConfigError> {
+        if !(-90.0..=90.0).contains(&self.latitude) {
+            return Err(ConfigError::InvalidLatitude(self.latitude));
+        }
+        if !(-180.0..=180.0).contains(&self.longitude) {
+            return Err(ConfigError::InvalidLongitude(self.longitude));
+        }
+        Ok(())
+    }
+}
+
 impl FromStr for Config {
     type Err = ConfigError;
 
@@ -79,6 +100,9 @@ impl Config {
             if !rooms.insert(&thermometer.room) {
                 return Err(ConfigError::DuplicateRoom(thermometer.room.clone()));
             }
+        }
+        if let Some(weather) = &self.weather_collector {
+            weather.validate()?;
         }
         Ok(())
     }
@@ -111,6 +135,8 @@ mod tests {
 
     const EXAMPLE: &str = include_str!("../../../config.example.toml");
 
+    const WEATHER_SECTION: &str = "[weather_collector]\nhttp_listen = \"0.0.0.0:8080\"\n# Outdoor weather location (Open-Meteo), in decimal degrees.\nlatitude = 48.8566\nlongitude = 2.3522\n\n";
+
     fn example_without(section: &str) -> String {
         EXAMPLE.replace(section, "")
     }
@@ -129,6 +155,56 @@ mod tests {
         assert_eq!(config.dashboard.store_url, "http://store:8080");
         assert_eq!(config.store.data_dir, Path::new("/data"));
         assert_eq!(config.alerter.ntfy_url, "http://ntfy");
+    }
+
+    #[test]
+    fn example_has_a_weather_location() {
+        let config: Config = EXAMPLE.parse().expect("example is valid");
+        let weather = config.weather_collector.expect("section is present");
+        assert_eq!(weather.http_listen.port(), 8080);
+        assert_eq!(weather.latitude, 48.8566);
+        assert_eq!(weather.longitude, 2.3522);
+    }
+
+    #[test]
+    fn weather_section_is_optional() {
+        let text = example_without(WEATHER_SECTION);
+        let config: Config = text.parse().expect("config is valid");
+        assert!(config.weather_collector.is_none());
+    }
+
+    #[test]
+    fn out_of_range_latitude_is_rejected() {
+        for latitude in ["91", "-90.5", "nan"] {
+            let text = EXAMPLE.replace("48.8566", latitude);
+            assert!(matches!(
+                text.parse::<Config>(),
+                Err(ConfigError::InvalidLatitude(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn out_of_range_longitude_is_rejected() {
+        for longitude in ["180.5", "-181", "nan"] {
+            let text = EXAMPLE.replace("2.3522", longitude);
+            assert!(matches!(
+                text.parse::<Config>(),
+                Err(ConfigError::InvalidLongitude(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn boundary_coordinates_are_accepted() {
+        let text = EXAMPLE.replace("48.8566", "90").replace("2.3522", "-180");
+        assert!(text.parse::<Config>().is_ok());
+    }
+
+    #[test]
+    fn unknown_weather_key_is_rejected() {
+        let text = EXAMPLE.replace("latitude = ", "altitude = 1\nlatitude = ");
+        assert!(matches!(text.parse::<Config>(), Err(ConfigError::Parse(_))));
     }
 
     #[test]
