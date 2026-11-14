@@ -1,0 +1,65 @@
+x-service: &service
+  restart: unless-stopped
+  volumes:
+    - ./config.toml:/etc/home-monitor/config.toml:ro
+  environment:
+    HOME_MONITOR_CONFIG: /etc/home-monitor/config.toml
+  healthcheck:
+    test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+    interval: 10s
+    timeout: 3s
+    retries: 3
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-W", "3"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  ble-collector:
+    <<: *service
+    build:
+      context: .
+      args:
+        BIN: ble-collector
+    volumes:
+      - ./config.toml:/etc/home-monitor/config.toml:ro
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+    environment:
+      HOME_MONITOR_CONFIG: /etc/home-monitor/config.toml
+      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/run/dbus/system_bus_socket
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+
+  store:
+    <<: *service
+    build:
+      context: .
+      args:
+        BIN: store
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+
+  dashboard:
+    <<: *service
+    build:
+      context: .
+      args:
+        BIN: dashboard
+    ports:
+      - "8080:8080"
+    depends_on:
+      store:
+        condition: service_healthy
+
+volumes:
+  mosquitto-data:

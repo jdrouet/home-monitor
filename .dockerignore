@@ -1,0 +1,7 @@
+target
+.git
+.claude
+.codex
+config.toml
+data
+lcov.info
