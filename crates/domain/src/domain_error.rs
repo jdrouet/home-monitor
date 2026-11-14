@@ -5,4 +5,6 @@ pub enum DomainError {
     InvalidMacAddress(String),
     #[error("room name must not be empty")]
     EmptyRoomName,
+    #[error("unknown source kind: {0:?}")]
+    UnknownSourceKind(String),
 }

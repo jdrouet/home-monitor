@@ -9,3 +9,26 @@ pub enum Metric {
     Humidity,
     Battery,
 }
+
+impl Metric {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Temperature => "temperature",
+            Self::Humidity => "humidity",
+            Self::Battery => "battery",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Metric;
+
+    #[test]
+    fn as_str_matches_the_serde_name() {
+        for metric in [Metric::Temperature, Metric::Humidity, Metric::Battery] {
+            let json = serde_json::to_string(&metric).expect("metric serializes");
+            assert_eq!(json, format!("\"{}\"", metric.as_str()));
+        }
+    }
+}
