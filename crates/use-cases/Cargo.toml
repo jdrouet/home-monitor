@@ -1,0 +1,17 @@
+[package]
+name = "use-cases"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+bthome.workspace = true
+domain.workspace = true
+tokio = { workspace = true, features = ["macros", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "test-util", "time"] }
+
+[lints]
+workspace = true

@@ -7,11 +7,16 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
+bthome = { path = "crates/bthome" }
+config = { path = "crates/config" }
 domain = { path = "crates/domain" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 toml = "1"
+tokio = { version = "1", default-features = false }
+tracing = "0.1"
+use-cases = { path = "crates/use-cases" }
 
 [workspace.lints.clippy]
 unwrap_used = "deny"
