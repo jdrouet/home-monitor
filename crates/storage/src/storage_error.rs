@@ -2,6 +2,7 @@ use std::io;
 use std::path::PathBuf;
 
 use datafusion::arrow::error::ArrowError;
+use datafusion::error::DataFusionError;
 use datafusion::parquet::errors::ParquetError;
 use domain::BatchError;
 
@@ -22,6 +23,8 @@ pub enum StorageError {
     Arrow(#[from] ArrowError),
     #[error("corrupt latest-values snapshot")]
     CorruptSnapshot(#[from] BatchError),
+    #[error("series query failed")]
+    Query(#[from] DataFusionError),
     #[error("invalid day file column: {0}")]
     InvalidColumn(String),
 }

@@ -3,6 +3,8 @@ mod day_file;
 #[cfg_attr(not(test), expect(dead_code, reason = "wired up by ParquetStore"))]
 mod measurement_batch;
 #[cfg_attr(not(test), expect(dead_code, reason = "wired up by ParquetStore"))]
+mod query_series;
+#[cfg_attr(not(test), expect(dead_code, reason = "wired up by ParquetStore"))]
 mod reading_key;
 #[cfg_attr(not(test), expect(dead_code, reason = "wired up by ParquetStore"))]
 mod replace_file;

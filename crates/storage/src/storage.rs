@@ -4,7 +4,7 @@ use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::NaiveDate;
-use domain::{Measurement, Metric, Timestamp, batch};
+use domain::{Measurement, Metric, SeriesQuery, Timestamp, batch};
 use use_cases::LatestValues;
 
 use crate::StorageError;
@@ -66,6 +66,22 @@ impl Storage {
             self.flush_day(date)?;
         }
         Ok(())
+    }
+
+    /// Unflushed readings that match `query`, before any bucketing.
+    pub(crate) fn unflushed(&self, query: &SeriesQuery) -> Vec<Measurement> {
+        self.wal
+            .rows()
+            .filter(|row| {
+                row.metric == query.metric
+                    && (query.from..query.to).contains(&row.timestamp)
+                    && query
+                        .source_id
+                        .as_ref()
+                        .is_none_or(|id| *id == row.source_id)
+            })
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn latest(&self) -> Vec<Measurement> {
@@ -134,7 +150,7 @@ mod tests {
     use std::fs;
 
     use chrono::NaiveDate;
-    use domain::{MacAddress, Measurement, Metric, SourceKind, Timestamp};
+    use domain::{MacAddress, Measurement, Metric, SeriesQuery, SourceKind, Timestamp};
     use tempfile::TempDir;
 
     use super::Storage;
@@ -326,6 +342,40 @@ mod tests {
         let kept = storage.drop_flushed(batch.clone()).expect("filter");
         assert_eq!(kept.len(), 2);
         assert!(batch.iter().all(|row| kept.contains(row)));
+    }
+
+    #[test]
+    fn unflushed_filters_by_metric_range_and_source() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut storage = open(&dir);
+        let other_source = Measurement {
+            source_id: MacAddress::new([9, 9, 9, 9, 9, 9]).into(),
+            ..temperature(2, 5.0)
+        };
+        storage
+            .append(vec![
+                temperature(1, 1.0),
+                temperature(2, 2.0),
+                temperature(3, 3.0),
+                humidity(2, 50.0),
+                other_source.clone(),
+            ])
+            .expect("append");
+        let all = SeriesQuery {
+            metric: Metric::Temperature,
+            source_id: None,
+            from: Timestamp::from_micros(2),
+            to: Timestamp::from_micros(3),
+            bucket_secs: None,
+        };
+        let mut rows = storage.unflushed(&all);
+        rows.sort_by(|a, b| a.value.total_cmp(&b.value));
+        assert_eq!(rows, [temperature(2, 2.0), other_source.clone()]);
+        let one = SeriesQuery {
+            source_id: Some(temperature(0, 0.0).source_id),
+            ..all
+        };
+        assert_eq!(storage.unflushed(&one), [temperature(2, 2.0)]);
     }
 
     #[test]

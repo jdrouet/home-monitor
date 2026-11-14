@@ -8,13 +8,16 @@ pub(crate) fn utc_date(timestamp: Timestamp) -> Option<NaiveDate> {
     (1..=9999).contains(&date.year()).then_some(date)
 }
 
-/// Like `utc_date`, but saturating: instants before year 1 map to the
-/// earliest date and later ones to the latest.
+const FIRST_DATE: NaiveDate = NaiveDate::from_ymd_opt(1, 1, 1).expect("valid date");
+const LAST_DATE: NaiveDate = NaiveDate::from_ymd_opt(9999, 12, 31).expect("valid date");
+
+/// Like `utc_date`, but saturating: instants before year 1 map to 0001-01-01
+/// and later than year 9999 to 9999-12-31.
 pub(crate) fn clamped_utc_date(timestamp: Timestamp) -> NaiveDate {
     utc_date(timestamp).unwrap_or(if timestamp.as_micros() < 0 {
-        NaiveDate::MIN
+        FIRST_DATE
     } else {
-        NaiveDate::MAX
+        LAST_DATE
     })
 }
 
@@ -28,12 +31,12 @@ mod tests {
     #[test]
     fn out_of_range_instants_saturate() {
         assert_eq!(
-            clamped_utc_date(Timestamp::from_micros(i64::MIN)),
-            NaiveDate::MIN
+            Some(clamped_utc_date(Timestamp::from_micros(i64::MIN))),
+            NaiveDate::from_ymd_opt(1, 1, 1)
         );
         assert_eq!(
-            clamped_utc_date(Timestamp::from_micros(i64::MAX)),
-            NaiveDate::MAX
+            Some(clamped_utc_date(Timestamp::from_micros(i64::MAX))),
+            NaiveDate::from_ymd_opt(9999, 12, 31)
         );
         assert_eq!(
             Some(clamped_utc_date(Timestamp::from_micros(0))),

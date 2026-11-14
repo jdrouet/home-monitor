@@ -15,6 +15,7 @@ use-cases.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]
 workspace = true
