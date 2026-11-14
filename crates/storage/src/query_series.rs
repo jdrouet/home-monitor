@@ -94,8 +94,11 @@ fn bucketed(frame: DataFrame, bucket_secs: Option<NonZeroU32>) -> Result<DataFra
         return Ok(frame);
     };
     let width = i64::from(secs.get()) * 1_000_000;
+    let micros = cast(col("timestamp"), DataType::Int64);
+    // Floor, not truncate: SQL `%` keeps the sign of the dividend.
+    let floored = micros.clone() - ((micros % lit(width)) + lit(width)) % lit(width);
     let start = cast(
-        cast(col("timestamp"), DataType::Int64) / lit(width) * lit(width),
+        floored,
         DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
     );
     Ok(frame.with_column("timestamp", start)?.aggregate(

@@ -155,6 +155,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn buckets_floor_across_the_epoch() {
+        let dir = TempDir::new().expect("tempdir");
+        let store = ParquetStore::open(dir.path()).expect("open");
+        store
+            .append(vec![temperature(-1, 10.0), temperature(0, 20.0)])
+            .expect("append");
+        let query = SeriesQuery {
+            from: Timestamp::from_micros(-DAY),
+            bucket_secs: NonZeroU32::new(60),
+            ..everything()
+        };
+        let rows = store.series(&query).await.expect("series");
+        assert_eq!(rows, [temperature(-60_000_000, 10.0), temperature(0, 20.0)]);
+    }
+
+    #[tokio::test]
     async fn the_futures_can_cross_threads() {
         let dir = TempDir::new().expect("tempdir");
         let store = ParquetStore::open(dir.path()).expect("open");
