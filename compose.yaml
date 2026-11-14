@@ -27,8 +27,7 @@ services:
     <<: *service
     build:
       context: .
-      args:
-        BIN: ble-collector
+      target: ble-collector
     volumes:
       - ./config.toml:/etc/home-monitor/config.toml:ro
       - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
@@ -43,8 +42,7 @@ services:
     <<: *service
     build:
       context: .
-      args:
-        BIN: store
+      target: store
     volumes:
       - ./config.toml:/etc/home-monitor/config.toml:ro
       - store-data:/data
@@ -56,8 +54,7 @@ services:
     <<: *service
     build:
       context: .
-      args:
-        BIN: dashboard
+      target: dashboard
     ports:
       - "8080:8080"
     depends_on:
