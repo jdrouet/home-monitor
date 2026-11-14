@@ -1,5 +1,6 @@
 mod router;
 
+use std::io;
 use std::sync::{Arc, Mutex};
 
 use anyhow::anyhow;
@@ -19,8 +20,9 @@ async fn main() -> anyhow::Result<()> {
         served = axum::serve(listener, router::router(state)) => {
             Err(anyhow!("http server ended: {served:?}"))
         }
-        never = mqtt::subscribe(&config.mqtt.host, config.mqtt.port, CLIENT_ID, move |batch| {
+        error = mqtt::subscribe(&config.mqtt.host, config.mqtt.port, CLIENT_ID, move |batch| {
             writer.lock().expect("state lock poisoned").record(batch);
-        }) => never,
+            Ok::<(), io::Error>(())
+        }) => Err(error.into()),
     }
 }
