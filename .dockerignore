@@ -5,3 +5,4 @@ target
 config.toml
 data
 lcov.info
+.env
