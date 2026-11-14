@@ -16,6 +16,7 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 config = { path = "crates/config" }
 domain = { path = "crates/domain" }
 mqtt = { path = "crates/mqtt" }
+ntfy = { path = "crates/ntfy" }
 reqwest = { version = "0.13", default-features = false }
 rumqttc = { version = "0.25", default-features = false }
 serde = { version = "1", features = ["derive"] }

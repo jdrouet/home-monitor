@@ -1,0 +1,16 @@
+[package]
+name = "ntfy"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+reqwest.workspace = true
+thiserror.workspace = true
+use-cases.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }
+
+[lints]
+workspace = true
