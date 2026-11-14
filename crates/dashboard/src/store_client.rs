@@ -1,5 +1,9 @@
+use std::time::Duration;
+
 use domain::{BatchError, Measurement, batch};
 use reqwest::{Client, Url};
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreClientError {
@@ -18,7 +22,10 @@ pub struct StoreClient {
 impl StoreClient {
     pub fn new(latest_url: Url) -> Self {
         Self {
-            http: Client::new(),
+            http: Client::builder()
+                .timeout(REQUEST_TIMEOUT)
+                .build()
+                .expect("http client configuration is valid"),
             latest_url,
         }
     }
