@@ -6,6 +6,8 @@ mod measurement_batch;
 mod reading_key;
 #[cfg_attr(not(test), expect(dead_code, reason = "wired up by ParquetStore"))]
 mod replace_file;
+#[cfg_attr(not(test), expect(dead_code, reason = "wired up by ParquetStore"))]
+mod storage;
 mod storage_error;
 #[cfg_attr(not(test), expect(dead_code, reason = "wired up by ParquetStore"))]
 mod sync_dir;

@@ -8,12 +8,38 @@ pub(crate) fn utc_date(timestamp: Timestamp) -> Option<NaiveDate> {
     (1..=9999).contains(&date.year()).then_some(date)
 }
 
+/// Like `utc_date`, but saturating: instants before year 1 map to the
+/// earliest date and later ones to the latest.
+pub(crate) fn clamped_utc_date(timestamp: Timestamp) -> NaiveDate {
+    utc_date(timestamp).unwrap_or(if timestamp.as_micros() < 0 {
+        NaiveDate::MIN
+    } else {
+        NaiveDate::MAX
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::NaiveDate;
     use domain::Timestamp;
 
-    use super::utc_date;
+    use super::{clamped_utc_date, utc_date};
+
+    #[test]
+    fn out_of_range_instants_saturate() {
+        assert_eq!(
+            clamped_utc_date(Timestamp::from_micros(i64::MIN)),
+            NaiveDate::MIN
+        );
+        assert_eq!(
+            clamped_utc_date(Timestamp::from_micros(i64::MAX)),
+            NaiveDate::MAX
+        );
+        assert_eq!(
+            Some(clamped_utc_date(Timestamp::from_micros(0))),
+            NaiveDate::from_ymd_opt(1970, 1, 1)
+        );
+    }
 
     const DAY_MICROS: i64 = 86_400_000_000;
 

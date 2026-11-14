@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use datafusion::arrow::error::ArrowError;
 use datafusion::parquet::errors::ParquetError;
+use domain::BatchError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
@@ -19,6 +20,8 @@ pub enum StorageError {
     Parquet(#[from] ParquetError),
     #[error("cannot build a record batch")]
     Arrow(#[from] ArrowError),
+    #[error("corrupt latest-values snapshot")]
+    CorruptSnapshot(#[from] BatchError),
     #[error("invalid day file column: {0}")]
     InvalidColumn(String),
 }
