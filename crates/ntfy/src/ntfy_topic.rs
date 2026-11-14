@@ -6,7 +6,6 @@ use crate::NtfyError;
 const MAX_LEN: usize = 64;
 
 /// The secret name of a ntfy topic. It is never printed.
-#[derive(Clone, PartialEq, Eq)]
 pub struct NtfyTopic(String);
 
 impl NtfyTopic {
