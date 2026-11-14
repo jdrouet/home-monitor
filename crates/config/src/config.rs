@@ -20,6 +20,7 @@ pub struct Config {
     pub ble_collector: ServiceConfig,
     pub store: StoreConfig,
     pub dashboard: DashboardConfig,
+    pub alerter: AlerterConfig,
     pub thermometers: Vec<Thermometer>,
 }
 
@@ -48,6 +49,13 @@ pub struct StoreConfig {
 pub struct DashboardConfig {
     pub http_listen: SocketAddr,
     pub store_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AlerterConfig {
+    pub http_listen: SocketAddr,
+    pub ntfy_url: String,
 }
 
 impl FromStr for Config {
@@ -120,6 +128,7 @@ mod tests {
         assert_eq!(config.mqtt.port, 1883);
         assert_eq!(config.dashboard.store_url, "http://store:8080");
         assert_eq!(config.store.data_dir, Path::new("/data"));
+        assert_eq!(config.alerter.ntfy_url, "http://ntfy");
     }
 
     #[test]
@@ -148,6 +157,9 @@ mod tests {
             format!("unknown = 1\n{EXAMPLE}"),
             example_without("data_dir = \"/data\"\n"),
             example_without("[mqtt]\nhost = \"mosquitto\"\nport = 1883\n"),
+            example_without(
+                "[alerter]\n# The ntfy topic is a secret: set NTFY_TOPIC in .env.\nhttp_listen = \"0.0.0.0:8080\"\nntfy_url = \"http://ntfy\"\n\n",
+            ),
         ] {
             assert!(matches!(text.parse::<Config>(), Err(ConfigError::Parse(_))));
         }

@@ -55,6 +55,28 @@ services:
       store:
         condition: service_healthy
 
+  ntfy:
+    image: binwiederhier/ntfy:v2
+    command: serve
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/v1/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  alerter:
+    <<: *service
+    image: ghcr.io/jdrouet/home-monitor-alerter:latest
+    env_file: .env
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      ntfy:
+        condition: service_healthy
+
 volumes:
   mosquitto-data:
   store-data:

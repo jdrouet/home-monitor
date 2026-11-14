@@ -13,6 +13,11 @@ data_dir = "/data"
 http_listen = "0.0.0.0:8080"
 store_url = "http://store:8080"
 
+[alerter]
+# The ntfy topic is a secret: set NTFY_TOPIC in .env.
+http_listen = "0.0.0.0:8080"
+ntfy_url = "http://ntfy"
+
 # Thermometers are matched by Bluetooth MAC address.
 [[thermometers]]
 mac = "A4:C1:38:1C:02:76" # ATC_1C0276

@@ -1,10 +1,8 @@
 use std::collections::BTreeMap;
-use std::time::Duration;
 
-use domain::{Measurement, Metric, RoomName, SourceId, SourceKind, Thermometer, Timestamp};
-
-/// A sensor counts as not reporting once its newest measurement is this old.
-pub const OFFLINE_AFTER: Duration = Duration::from_secs(60 * 60);
+use domain::{
+    Measurement, Metric, OFFLINE_AFTER, RoomName, SourceId, SourceKind, Thermometer, Timestamp,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Freshness {
