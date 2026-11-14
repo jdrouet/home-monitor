@@ -12,7 +12,6 @@ pub use collector::Collector;
 pub use latest_values::LatestValues;
 pub use measurement_store::MeasurementStore;
 pub use overview::{
-    ClimateReading, Freshness, OFFLINE_AFTER, Overview, RoomOverview, SensorOverview,
-    build_overview,
+    ClimateReading, Freshness, Overview, RoomOverview, SensorOverview, build_overview,
 };
 pub use publisher::Publisher;
