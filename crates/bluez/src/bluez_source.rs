@@ -18,8 +18,7 @@ pub struct BluezSource<S> {
 /// Powers the default adapter and starts an LE scan that reports every
 /// advertisement, including repeats of unchanged data.
 pub async fn start() -> bluer::Result<BluezSource<impl Stream<Item = AdapterEvent>>> {
-    let adapter = Session::new().await?.default_adapter().await?;
-    adapter.set_powered(true).await?;
+    let adapter = powered_adapter().await?;
     adapter
         .set_discovery_filter(DiscoveryFilter {
             transport: DiscoveryTransport::Le,
@@ -32,6 +31,12 @@ pub async fn start() -> bluer::Result<BluezSource<impl Stream<Item = AdapterEven
         adapter,
         events: Box::pin(events),
     })
+}
+
+async fn powered_adapter() -> bluer::Result<Adapter> {
+    let adapter = Session::new().await?.default_adapter().await?;
+    adapter.set_powered(true).await?;
+    Ok(adapter)
 }
 
 impl<S: Stream<Item = AdapterEvent> + Send> AdvertisementSource for BluezSource<S> {
