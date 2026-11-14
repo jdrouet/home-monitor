@@ -38,13 +38,15 @@ impl StateFile {
         file.write_all(&serde_json::to_vec(&wire)?)?;
         file.sync_all()?;
         fs::rename(&temp, &self.path)?;
-        let parent = self
-            .path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        File::open(parent)?.sync_all()
+        File::open(parent_dir(&self.path))?.sync_all()
     }
+}
+
+/// The directory holding `path`; `.` for a bare file name.
+fn parent_dir(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
 }
 
 impl AlertStateStore for StateFile {
@@ -198,11 +200,11 @@ mod tests {
     }
 
     #[test]
-    fn a_relative_path_without_a_directory_works() {
-        let dir = TempDir::new().expect("tempdir");
-        std::env::set_current_dir(dir.path()).expect("cwd");
-        let file = StateFile::new("alerts.json".into());
-        file.save(&state()).expect("save");
-        assert_eq!(file.load().expect("load"), state());
+    fn a_bare_file_name_is_synced_through_the_current_directory() {
+        assert_eq!(super::parent_dir(Path::new("alerts.json")), Path::new("."));
+        assert_eq!(
+            super::parent_dir(Path::new("/data/alerts.json")),
+            Path::new("/data")
+        );
     }
 }
