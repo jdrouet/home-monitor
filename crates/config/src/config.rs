@@ -12,6 +12,7 @@ use crate::ConfigError;
 
 const PATH_ENV: &str = "HOME_MONITOR_CONFIG";
 const DEFAULT_PATH: &str = "config.toml";
+const DEFAULT_STATE_FILE: &str = "/data/alerts.json";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -57,6 +58,12 @@ pub struct DashboardConfig {
 pub struct AlerterConfig {
     pub http_listen: SocketAddr,
     pub ntfy_url: String,
+    #[serde(default = "default_state_file")]
+    pub state_file: PathBuf,
+}
+
+fn default_state_file() -> PathBuf {
+    PathBuf::from(DEFAULT_STATE_FILE)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -164,6 +171,22 @@ mod tests {
         assert_eq!(weather.http_listen.port(), 8080);
         assert_eq!(weather.latitude, 48.8566);
         assert_eq!(weather.longitude, 2.3522);
+    }
+
+    #[test]
+    fn state_file_defaults_to_the_data_volume() {
+        let config: Config = EXAMPLE.parse().expect("example is valid");
+        assert_eq!(config.alerter.state_file, Path::new("/data/alerts.json"));
+    }
+
+    #[test]
+    fn state_file_can_be_set() {
+        let text = EXAMPLE.replace(
+            "ntfy_url = \"http://ntfy\"\n",
+            "ntfy_url = \"http://ntfy\"\nstate_file = \"/var/alerts.json\"\n",
+        );
+        let config: Config = text.parse().expect("config is valid");
+        assert_eq!(config.alerter.state_file, Path::new("/var/alerts.json"));
     }
 
     #[test]

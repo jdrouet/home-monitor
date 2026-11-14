@@ -35,6 +35,7 @@ dependencies = [
  "domain",
  "mqtt",
  "ntfy",
+ "state-file",
  "tokio",
  "tracing-subscriber",
  "use-cases",
