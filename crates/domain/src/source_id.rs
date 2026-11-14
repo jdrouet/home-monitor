@@ -13,6 +13,12 @@ impl SourceId {
     }
 }
 
+impl From<String> for SourceId {
+    fn from(id: String) -> Self {
+        Self(id)
+    }
+}
+
 impl From<MacAddress> for SourceId {
     fn from(address: MacAddress) -> Self {
         Self(address.to_string())

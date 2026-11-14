@@ -45,6 +45,9 @@ services:
       context: .
       args:
         BIN: store
+    volumes:
+      - ./config.toml:/etc/home-monitor/config.toml:ro
+      - store-data:/data
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -63,3 +66,4 @@ services:
 
 volumes:
   mosquitto-data:
+  store-data:

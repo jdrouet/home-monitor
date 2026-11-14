@@ -18,7 +18,7 @@ const DEFAULT_PATH: &str = "config.toml";
 pub struct Config {
     pub mqtt: MqttConfig,
     pub ble_collector: ServiceConfig,
-    pub store: ServiceConfig,
+    pub store: StoreConfig,
     pub dashboard: DashboardConfig,
     pub thermometers: Vec<Thermometer>,
 }
@@ -34,6 +34,13 @@ pub struct MqttConfig {
 #[serde(deny_unknown_fields)]
 pub struct ServiceConfig {
     pub http_listen: SocketAddr,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoreConfig {
+    pub http_listen: SocketAddr,
+    pub data_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -112,6 +119,7 @@ mod tests {
         assert_eq!(config.mqtt.host, "mosquitto");
         assert_eq!(config.mqtt.port, 1883);
         assert_eq!(config.dashboard.store_url, "http://store:8080");
+        assert_eq!(config.store.data_dir, Path::new("/data"));
     }
 
     #[test]
@@ -138,6 +146,7 @@ mod tests {
             EXAMPLE.replace("A4:C1:38:E1:6F:B2", "not-a-mac"),
             EXAMPLE.replace("\"office\"", "\"\""),
             format!("unknown = 1\n{EXAMPLE}"),
+            example_without("data_dir = \"/data\"\n"),
             example_without("[mqtt]\nhost = \"mosquitto\"\nport = 1883\n"),
         ] {
             assert!(matches!(text.parse::<Config>(), Err(ConfigError::Parse(_))));
