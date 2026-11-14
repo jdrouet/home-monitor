@@ -1,5 +1,6 @@
 mod advertisement;
 mod advertisement_source;
+mod alert_state_store;
 mod collect_weather;
 mod collector;
 mod latest_values;
@@ -14,6 +15,7 @@ mod weather_report;
 
 pub use advertisement::Advertisement;
 pub use advertisement_source::AdvertisementSource;
+pub use alert_state_store::AlertStateStore;
 pub use collect_weather::collect_weather;
 pub use collector::Collector;
 pub use latest_values::LatestValues;
