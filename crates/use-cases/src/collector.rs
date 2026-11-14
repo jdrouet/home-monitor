@@ -18,11 +18,9 @@ pub struct Collector {
 }
 
 impl Collector {
-    /// Records the readings of a fresh BTHome advertisement.
-    ///
-    /// Only a changed packet id proves a fresh advertisement: BlueZ replays
-    /// cached service data, so the first packet from a sensor just primes the
-    /// id. Packets without an id cannot be checked and are ignored.
+    /// Records readings of a fresh BTHome packet. BlueZ replays cached data,
+    /// so only a changed packet id proves freshness: a sensor's first packet
+    /// just primes the id, and packets without an id are ignored.
     pub fn observe(&mut self, advertisement: &Advertisement) -> Result<(), DecodeError> {
         let Some(data) = advertisement.service_data.get(&bthome::SERVICE_UUID) else {
             return Ok(());
