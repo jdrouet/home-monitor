@@ -5,7 +5,7 @@ use datafusion::arrow::array::{
     Array, Float64Array, RecordBatch, StringArray, TimestampMicrosecondArray,
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
-use domain::{DomainError, MacAddress, Measurement, Metric, SourceKind, Timestamp};
+use domain::{DomainError, Measurement, Metric, SourceKind, Timestamp};
 
 use crate::StorageError;
 
@@ -54,11 +54,10 @@ pub(crate) fn from_batch(
     (0..batch.num_rows())
         .map(|row| {
             let source_kind = kinds.value(row).parse::<SourceKind>().map_err(invalid)?;
-            let mac = ids.value(row).parse::<MacAddress>().map_err(invalid)?;
             Ok(Measurement {
                 timestamp: Timestamp::from_micros(timestamps.value(row)),
                 source_kind,
-                source_id: mac.into(),
+                source_id: ids.value(row).to_owned().into(),
                 metric,
                 value: values.value(row),
             })

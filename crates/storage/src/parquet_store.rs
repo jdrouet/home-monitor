@@ -122,6 +122,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_source_id_is_kept_exactly_as_stored() {
+        let dir = TempDir::new().expect("tempdir");
+        let store = ParquetStore::open(dir.path()).expect("open");
+        let odd = Measurement {
+            source_id: String::from("a4:c1:38:1c:02:76").into(),
+            ..temperature(1, 1.0)
+        };
+        store.append(vec![odd.clone()]).expect("append");
+        store
+            .flush_due(Timestamp::from_micros(DAY + 5))
+            .await
+            .expect("flush");
+        store.append(vec![odd.clone()]).expect("redelivery");
+        let rows = store.series(&everything()).await.expect("series");
+        assert_eq!(rows, [odd]);
+    }
+
+    #[tokio::test]
     async fn buckets_apply_to_the_merged_rows() {
         let dir = TempDir::new().expect("tempdir");
         let store = ParquetStore::open(dir.path()).expect("open");
