@@ -32,6 +32,24 @@ Commit messages must follow [Conventional Commits](https://www.conventionalcommi
 - Write the subject in the imperative mood, in lower case, with no trailing period.
 - Mark breaking changes with `!` after the type or scope (`feat(domain)!: rename metric enum`) and explain them in a `BREAKING CHANGE:` footer.
 
+## Continuous integration
+
+Every pull request runs these checks, and all must pass:
+
+- `cargo fmt --all --check`
+- `cargo clippy -- -D warnings` on all targets and features
+- Tests, run through `cargo llvm-cov` to produce coverage
+- `cargo-machete`, to find unused dependencies
+- `cargo hack check --feature-powerset`
+- `cargo-crap` 0.9.0, which combines complexity and coverage into a CRAP
+  score per function. The threshold is 30 (team decision, issue #3): a
+  function scoring above 30 fails the build.
+
+A separate check validates the pull request title and every non-merge commit
+against the types listed under Commit messages.
+
+The Rust jobs are skipped while there is no `Cargo.toml` at the repository root.
+
 ## Code style
 
 Rust code follows the [Google Rust Style Guide](https://google.github.io/styleguide/rustguide.html),
