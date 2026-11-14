@@ -1,8 +1,8 @@
 use std::convert::Infallible;
-use std::env;
+use std::env::{self, VarError};
 use std::time::Duration;
 
-use anyhow::{Context, anyhow};
+use anyhow::anyhow;
 use axum::{Router, routing::get};
 use config::Config;
 use domain::Timestamp;
@@ -24,9 +24,14 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn notifier(config: &Config) -> anyhow::Result<NtfyNotifier> {
-    let topic = env::var(TOPIC_ENV).context("NTFY_TOPIC is not set")?;
-    let topic: NtfyTopic = topic.parse()?;
+    let topic = topic_from_env(env::var(TOPIC_ENV))?;
     Ok(NtfyNotifier::new(&config.alerter.ntfy_url, &topic)?)
+}
+
+// The error must never carry the variable's value: the topic is a secret.
+fn topic_from_env(value: Result<String, VarError>) -> anyhow::Result<NtfyTopic> {
+    let value = value.map_err(|_| anyhow!("{TOPIC_ENV} is not set or not valid UTF-8"))?;
+    Ok(value.parse()?)
 }
 
 async fn run(config: Config, notifier: NtfyNotifier) -> anyhow::Result<()> {
@@ -48,5 +53,34 @@ async fn notify_every<N: Notifier>(alerts: &OfflineAlerts, notifier: &N) -> Infa
     loop {
         ticker.tick().await;
         alerts.notify_due(notifier, Timestamp::now).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::env::VarError;
+    use std::ffi::OsString;
+
+    use super::topic_from_env;
+
+    #[test]
+    fn non_unicode_value_is_not_leaked() {
+        let error = topic_from_env(Err(VarError::NotUnicode(OsString::from("SECRET_SENTINEL"))))
+            .expect_err("not unicode");
+        assert!(!format!("{error:#}").contains("SECRET_SENTINEL"));
+        assert!(!format!("{error:?}").contains("SECRET_SENTINEL"));
+    }
+
+    #[test]
+    fn missing_variable_is_named() {
+        let error = topic_from_env(Err(VarError::NotPresent)).expect_err("not set");
+        assert!(error.to_string().contains("NTFY_TOPIC"));
+    }
+
+    #[test]
+    fn invalid_topic_is_rejected_without_echo() {
+        let error = topic_from_env(Ok("SECRET/SENTINEL".to_owned())).expect_err("invalid");
+        assert!(!format!("{error:#}").contains("SECRET"));
+        assert!(topic_from_env(Ok("good_topic".to_owned())).is_ok());
     }
 }
