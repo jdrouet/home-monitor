@@ -25,7 +25,7 @@ impl FromStr for MacAddress {
         let mut parts = text.split(':');
         for octet in &mut octets {
             let part = parts.next().ok_or_else(invalid)?;
-            if part.len() != 2 {
+            if part.len() != 2 || !part.bytes().all(|b| b.is_ascii_hexdigit()) {
                 return Err(invalid());
             }
             *octet = u8::from_str_radix(part, 16).map_err(|_| invalid())?;
@@ -87,6 +87,8 @@ mod tests {
             "A4:C1:38:1C:02:ZZ",
             "A4-C1-38-1C-02-76",
             "A4:C1:38:1C:02:7",
+            "A4:C1:38:1C:+2:76",
+            "A4:C1:38:1C:-1:76",
             "",
         ] {
             assert!(text.parse::<MacAddress>().is_err(), "{text} accepted");
