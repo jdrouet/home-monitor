@@ -3719,6 +3719,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "weather-collector"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "config",
+ "domain",
+ "mqtt",
+ "open-meteo",
+ "tokio",
+ "tracing-subscriber",
+ "use-cases",
+]
+
+[[package]]
 name = "web-sys"
 version = "0.3.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
