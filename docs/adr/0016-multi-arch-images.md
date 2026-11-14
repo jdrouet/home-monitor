@@ -19,7 +19,8 @@ are proven only on `rust:1-alpine`. ADR-0009 assumed cross-compilation.
 - Images are `ghcr.io/jdrouet/home-monitor-<service>`, tagged `latest` and
   `sha-<7-char commit>`, both multi-arch. Each architecture pushes
   `sha-<commit>-<arch>`; a merge job joins them into `sha-<commit>`, and
-  `latest` moves only to the current head of main, one run at a time.
+  each run then points `latest` at the current head of main once that head is
+  published, one run at a time.
   Publishing runs on push to main and on manual dispatch only.
 - Pull requests build both architectures without pushing.
 - `compose.yaml` runs the published images; `compose.build.yaml` adds local builds.

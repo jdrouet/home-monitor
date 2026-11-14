@@ -111,17 +111,21 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # Any run promotes main's current head, so a replaced pending run cannot
+      # leave latest behind; the head's own run promotes it if not built yet.
       - name: Move latest to the head of main
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE: ${{ github.server_url }}/${{ github.repository }}
         run: |
           head=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
-          if [ "$head" != "$GITHUB_SHA" ]; then
-            echo "::notice::main moved to $head; leaving latest alone"
-            exit 0
-          fi
-          short="sha-${GITHUB_SHA::7}"
+          short="sha-${head::7}"
+          for svc in ble-collector store dashboard; do
+            if ! docker buildx imagetools inspect "ghcr.io/jdrouet/home-monitor-$svc:$short" >/dev/null 2>&1; then
+              echo "::notice::$short is not published yet; its own run will move latest"
+              exit 0
+            fi
+          done
           for svc in ble-collector store dashboard; do
             image="ghcr.io/jdrouet/home-monitor-$svc"
             docker buildx imagetools create \
