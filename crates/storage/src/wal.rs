@@ -28,6 +28,7 @@ impl Wal {
     pub(crate) fn open(data_dir: &Path) -> Result<Self, StorageError> {
         let dir = data_dir.join("wal");
         fs::create_dir_all(&dir)?;
+        sync_dir(&dir)?;
         sync_dir(data_dir)?;
         let mut wal = Self {
             dir,
