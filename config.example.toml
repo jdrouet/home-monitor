@@ -1,0 +1,26 @@
+[mqtt]
+host = "mosquitto"
+port = 1883
+
+[ble_collector]
+http_listen = "0.0.0.0:8080"
+
+[store]
+http_listen = "0.0.0.0:8080"
+
+[dashboard]
+http_listen = "0.0.0.0:8080"
+store_url = "http://store:8080"
+
+# Thermometers are matched by Bluetooth MAC address.
+[[thermometers]]
+mac = "A4:C1:38:1C:02:76" # ATC_1C0276
+room = "bedroom"
+
+[[thermometers]]
+mac = "A4:C1:38:E1:6F:B2" # ATC_E16FB2
+room = "office"
+
+[[thermometers]]
+mac = "A4:C1:38:45:51:3E" # ATC_45513E
+room = "living room"

@@ -1,0 +1,32 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+anyhow = "1"
+askama = { version = "0.16", default-features = false, features = ["derive", "std"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+bluez = { path = "crates/bluez" }
+bthome = { path = "crates/bthome" }
+config = { path = "crates/config" }
+domain = { path = "crates/domain" }
+mqtt = { path = "crates/mqtt" }
+reqwest = { version = "0.13", default-features = false }
+rumqttc = { version = "0.25", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+toml = "1"
+tokio = { version = "1", default-features = false }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+use-cases = { path = "crates/use-cases" }
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+wildcard_imports = "deny"
+enum_glob_use = "deny"

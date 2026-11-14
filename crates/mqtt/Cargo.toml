@@ -1,0 +1,15 @@
+[package]
+name = "mqtt"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+domain.workspace = true
+rumqttc.workspace = true
+tokio = { workspace = true, features = ["rt", "time"] }
+tracing.workspace = true
+use-cases.workspace = true
+
+[lints]
+workspace = true

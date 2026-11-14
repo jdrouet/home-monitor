@@ -3,3 +3,5 @@
 /target
 .env
 /data
+/lcov.info
+/config.toml
