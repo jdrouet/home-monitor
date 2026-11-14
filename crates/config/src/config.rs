@@ -12,6 +12,7 @@ use crate::ConfigError;
 
 const PATH_ENV: &str = "HOME_MONITOR_CONFIG";
 const DEFAULT_PATH: &str = "config.toml";
+const DEFAULT_STATE_FILE: &str = "/data/alerts.json";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -57,6 +58,12 @@ pub struct DashboardConfig {
 pub struct AlerterConfig {
     pub http_listen: SocketAddr,
     pub ntfy_url: String,
+    #[serde(default = "default_state_file")]
+    pub state_file: PathBuf,
+}
+
+fn default_state_file() -> PathBuf {
+    PathBuf::from(DEFAULT_STATE_FILE)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -164,6 +171,59 @@ mod tests {
         assert_eq!(weather.http_listen.port(), 8080);
         assert_eq!(weather.latitude, 48.8566);
         assert_eq!(weather.longitude, 2.3522);
+    }
+
+    #[test]
+    fn state_file_defaults_to_the_data_volume() {
+        let config: Config = EXAMPLE.parse().expect("example is valid");
+        assert_eq!(config.alerter.state_file, Path::new("/data/alerts.json"));
+    }
+
+    #[test]
+    fn state_file_can_be_set() {
+        let text = EXAMPLE.replace(
+            "ntfy_url = \"http://ntfy\"\n",
+            "ntfy_url = \"http://ntfy\"\nstate_file = \"/var/alerts.json\"\n",
+        );
+        let config: Config = text.parse().expect("config is valid");
+        assert_eq!(config.alerter.state_file, Path::new("/var/alerts.json"));
+    }
+
+    #[test]
+    fn example_sets_a_range_per_room() {
+        let config: Config = EXAMPLE.parse().expect("example is valid");
+        let ranges: Vec<_> = config
+            .thermometers
+            .iter()
+            .map(|thermometer| {
+                let range = thermometer.temperature_range.expect("range is set");
+                (range.min(), range.max())
+            })
+            .collect();
+        assert_eq!(ranges, [(18.0, 20.0), (19.0, 22.0), (19.0, 22.0)]);
+    }
+
+    #[test]
+    fn range_is_optional() {
+        let text = EXAMPLE.replace("min_temperature = 18.0\nmax_temperature = 20.0\n", "");
+        let config: Config = text.parse().expect("config is valid");
+        assert!(config.thermometers[0].temperature_range.is_none());
+        assert!(config.thermometers[1].temperature_range.is_some());
+    }
+
+    #[test]
+    fn invalid_ranges_are_rejected() {
+        for text in [
+            EXAMPLE.replace("min_temperature = 18.0\n", ""),
+            EXAMPLE.replace("max_temperature = 20.0\n", ""),
+            EXAMPLE.replace("min_temperature = 18.0", "min_temperature = 20.0"),
+            EXAMPLE.replace("min_temperature = 18.0", "min_temperature = 25.0"),
+            EXAMPLE.replace("min_temperature = 18.0", "min_temperature = nan"),
+            EXAMPLE.replace("max_temperature = 20.0", "max_temperature = inf"),
+            EXAMPLE.replace("min_temperature = 18.0", "minimum = 18.0"),
+        ] {
+            assert!(matches!(text.parse::<Config>(), Err(ConfigError::Parse(_))));
+        }
     }
 
     #[test]

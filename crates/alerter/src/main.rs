@@ -7,9 +7,10 @@ use axum::{Router, routing::get};
 use config::Config;
 use domain::Timestamp;
 use ntfy::{NtfyNotifier, NtfyTopic};
+use state_file::StateFile;
 use tokio::net::TcpListener;
 use tokio::time::{Instant, interval_at};
-use use_cases::{Notifier, OfflineAlerts};
+use use_cases::{AlertStateStore, Alerts, Notifier};
 
 const CLIENT_ID: &str = "alerter";
 const TOPIC_ENV: &str = "NTFY_TOPIC";
@@ -35,7 +36,8 @@ fn topic_from_env(value: Result<String, VarError>) -> anyhow::Result<NtfyTopic> 
 }
 
 async fn run(config: Config, notifier: NtfyNotifier) -> anyhow::Result<()> {
-    let alerts = OfflineAlerts::new(&config.thermometers, Timestamp::now());
+    let store = StateFile::new(config.alerter.state_file.clone());
+    let alerts = Alerts::new(&config.thermometers, &store, Timestamp::now());
     let listener = TcpListener::bind(config.alerter.http_listen).await?;
     let health = Router::new().route("/healthz", get(|| async { "ok" }));
     tokio::select! {
@@ -44,15 +46,19 @@ async fn run(config: Config, notifier: NtfyNotifier) -> anyhow::Result<()> {
             alerts.observe(&batch);
             Ok::<(), Infallible>(())
         }) => Err(error.into()),
-        never = notify_every(&alerts, &notifier) => match never {},
+        never = notify_every(&alerts, &notifier, &store) => match never {},
     }
 }
 
-async fn notify_every<N: Notifier>(alerts: &OfflineAlerts, notifier: &N) -> Infallible {
+async fn notify_every<N: Notifier, S: AlertStateStore>(
+    alerts: &Alerts,
+    notifier: &N,
+    store: &S,
+) -> Infallible {
     let mut ticker = interval_at(Instant::now() + CHECK_PERIOD, CHECK_PERIOD);
     loop {
         ticker.tick().await;
-        alerts.notify_due(notifier, Timestamp::now).await;
+        alerts.notify_due(notifier, store, Timestamp::now).await;
     }
 }
 

@@ -11,6 +11,7 @@ config.workspace = true
 domain.workspace = true
 mqtt.workspace = true
 ntfy.workspace = true
+state-file.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt", "time"] }
 tracing-subscriber.workspace = true
 use-cases.workspace = true

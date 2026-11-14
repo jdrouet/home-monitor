@@ -70,6 +70,9 @@ services:
   alerter:
     <<: *service
     image: ghcr.io/jdrouet/home-monitor-alerter:latest
+    volumes:
+      - ./config.toml:/etc/home-monitor/config.toml:ro
+      - alerter-data:/data
     env_file: .env
     depends_on:
       mosquitto:
@@ -85,5 +88,6 @@ services:
         condition: service_healthy
 
 volumes:
+  alerter-data:
   mosquitto-data:
   store-data:

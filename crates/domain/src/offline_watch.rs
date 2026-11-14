@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::{OfflineEvent, Timestamp};
+use crate::{OfflineAlert, OfflineEvent, Timestamp};
 
 /// A sensor counts as not reporting once its newest measurement is this old.
 pub const OFFLINE_AFTER: Duration = Duration::from_secs(60 * 60);
@@ -21,6 +21,14 @@ impl OfflineWatch {
             last_seen: baseline,
             notified_at: None,
         }
+    }
+
+    /// The alert delivered and not yet resolved, if any.
+    pub fn active(&self) -> Option<OfflineAlert> {
+        self.notified_at.map(|notified_at| OfflineAlert {
+            last_seen: self.last_seen,
+            notified_at,
+        })
     }
 
     /// Records a measurement time; it never moves `last_seen` backwards.
@@ -51,11 +59,20 @@ impl OfflineWatch {
     }
 }
 
+impl From<OfflineAlert> for OfflineWatch {
+    fn from(alert: OfflineAlert) -> Self {
+        Self {
+            last_seen: alert.last_seen,
+            notified_at: Some(alert.notified_at),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use crate::{OfflineEvent, Timestamp};
+    use crate::{OfflineAlert, OfflineEvent, Timestamp};
 
     use super::OfflineWatch;
 
@@ -141,6 +158,37 @@ mod tests {
         watch.saw(at(10));
         assert_eq!(watch.due(at(1000 + 3599)), None);
         assert!(watch.due(at(1000 + 3600)).is_some());
+    }
+
+    #[test]
+    fn a_restored_alert_reminds_twelve_hours_after_its_notification() {
+        let mut watch = OfflineWatch::from(OfflineAlert {
+            last_seen: at(0),
+            notified_at: at(3600),
+        });
+        assert_eq!(watch.due(at(3600 + 12 * 3600 - 1)), None);
+        assert_eq!(
+            watch.due(at(3600 + 12 * 3600)),
+            Some(OfflineEvent::StillOffline {
+                silent_for: hours(13)
+            })
+        );
+        watch.saw(at(4000));
+        assert_eq!(watch.due(at(4001)), Some(OfflineEvent::Back));
+    }
+
+    #[test]
+    fn the_active_alert_round_trips() {
+        let alert = OfflineAlert {
+            last_seen: at(10),
+            notified_at: at(3610),
+        };
+        assert_eq!(OfflineWatch::from(alert).active(), Some(alert));
+        assert_eq!(OfflineWatch::new(at(10)).active(), None);
+        assert_eq!(
+            notified_offline().active().map(|a| a.notified_at),
+            Some(at(3600))
+        );
     }
 
     #[test]

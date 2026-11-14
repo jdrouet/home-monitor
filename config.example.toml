@@ -28,11 +28,17 @@ longitude = 2.3522
 [[thermometers]]
 mac = "A4:C1:38:1C:02:76" # ATC_1C0276
 room = "bedroom"
+min_temperature = 18.0
+max_temperature = 20.0
 
 [[thermometers]]
 mac = "A4:C1:38:E1:6F:B2" # ATC_E16FB2
 room = "office"
+min_temperature = 19.0
+max_temperature = 22.0
 
 [[thermometers]]
 mac = "A4:C1:38:45:51:3E" # ATC_45513E
 room = "living room"
+min_temperature = 19.0
+max_temperature = 22.0
