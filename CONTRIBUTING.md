@@ -44,9 +44,15 @@ Every pull request runs these checks, and all must pass:
 - `cargo-crap` 0.9.0, which combines complexity and coverage into a CRAP
   score per function. The threshold is 30 (team decision, issue #3): a
   function scoring above 30 fails the build.
+- A Docker build of every service image for `linux/amd64` and `linux/arm64`.
+  The images are not pushed.
 
 A separate check validates the pull request title and every non-merge commit
 against the types listed under Commit messages.
+
+The Images workflow runs on every push to main and publishes
+`ghcr.io/jdrouet/home-monitor-<service>` for both architectures, tagged
+`latest` and `sha-<7-char commit>` (ADR-0016).
 
 The Rust jobs are skipped while there is no `Cargo.toml` at the repository root.
 

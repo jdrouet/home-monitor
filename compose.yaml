@@ -25,13 +25,10 @@ services:
 
   ble-collector:
     <<: *service
-    build:
-      context: .
-      args:
-        BIN: ble-collector
+    image: ghcr.io/jdrouet/home-monitor-ble-collector:latest
     volumes:
       - ./config.toml:/etc/home-monitor/config.toml:ro
-      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      - /run/dbus:/run/dbus
     environment:
       HOME_MONITOR_CONFIG: /etc/home-monitor/config.toml
       DBUS_SYSTEM_BUS_ADDRESS: unix:path=/run/dbus/system_bus_socket
@@ -41,10 +38,7 @@ services:
 
   store:
     <<: *service
-    build:
-      context: .
-      args:
-        BIN: store
+    image: ghcr.io/jdrouet/home-monitor-store:latest
     volumes:
       - ./config.toml:/etc/home-monitor/config.toml:ro
       - store-data:/data
@@ -54,10 +48,7 @@ services:
 
   dashboard:
     <<: *service
-    build:
-      context: .
-      args:
-        BIN: dashboard
+    image: ghcr.io/jdrouet/home-monitor-dashboard:latest
     ports:
       - "8080:8080"
     depends_on:

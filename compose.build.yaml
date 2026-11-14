@@ -1,0 +1,7 @@
+services:
+  ble-collector:
+    build: { context: ., target: ble-collector }
+  store:
+    build: { context: ., target: store }
+  dashboard:
+    build: { context: ., target: dashboard }
