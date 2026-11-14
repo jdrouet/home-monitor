@@ -11,6 +11,7 @@ mod notifier;
 mod offline_notification;
 mod overview;
 mod publisher;
+mod temperature_notification;
 mod weather_provider;
 mod weather_report;
 

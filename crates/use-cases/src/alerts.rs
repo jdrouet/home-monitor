@@ -2,16 +2,63 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
 use domain::{
-    AlertState, Measurement, OfflineEvent, OfflineWatch, RoomName, SourceId, Thermometer, Timestamp,
+    AlertState, Measurement, Metric, OfflineEvent, OfflineWatch, RoomName, SourceId,
+    TemperatureEvent, TemperatureWatch, Thermometer, Timestamp,
 };
 use tracing::{error, info, warn};
 
 use crate::offline_notification::offline_notification;
+use crate::temperature_notification::temperature_notification;
 use crate::{AlertStateStore, Notification, Notifier};
+
+#[derive(Clone, Copy)]
+enum Rule {
+    Offline,
+    Temperature,
+}
+
+const RULES: [Rule; 2] = [Rule::Offline, Rule::Temperature];
+
+#[derive(Debug, Clone, Copy)]
+enum Event {
+    Offline(OfflineEvent),
+    Temperature(TemperatureEvent),
+}
 
 struct Watched {
     room: RoomName,
     offline: OfflineWatch,
+    temperature: Option<TemperatureWatch>,
+}
+
+impl Watched {
+    fn pending(&self, rule: Rule, now: Timestamp) -> Option<(Event, Notification)> {
+        match rule {
+            Rule::Offline => {
+                let event = self.offline.due(now)?;
+                Some((
+                    Event::Offline(event),
+                    offline_notification(&self.room, event),
+                ))
+            }
+            Rule::Temperature => {
+                let watch = self.temperature.as_ref()?;
+                let event = watch.due(now)?;
+                Some((
+                    Event::Temperature(event),
+                    temperature_notification(&self.room, event, watch.range()),
+                ))
+            }
+        }
+    }
+
+    fn delivered(&mut self, event: Event, now: Timestamp) {
+        match (event, self.temperature.as_mut()) {
+            (Event::Offline(event), _) => self.offline.delivered(event, now),
+            (Event::Temperature(event), Some(watch)) => watch.delivered(event, now),
+            (Event::Temperature(_), None) => {}
+        }
+    }
 }
 
 /// Watches every configured sensor and sends the notifications they are owed.
@@ -43,9 +90,13 @@ impl Alerts {
                     || OfflineWatch::new(now),
                     |alert| OfflineWatch::from(*alert),
                 );
+                let temperature = thermometer.temperature_range.map(|range| {
+                    TemperatureWatch::new(range, state.temperature.get(&source_id).copied())
+                });
                 let watched = Watched {
                     room: thermometer.room.clone(),
                     offline,
+                    temperature,
                 };
                 (source_id, watched)
             })
@@ -56,12 +107,19 @@ impl Alerts {
         }
     }
 
-    /// Records measurement times of configured sensors; others are ignored.
+    /// Records measurements of configured sensors; others are ignored. Every
+    /// metric shows a sensor is alive; only temperatures feed the range rule.
     pub fn observe(&self, measurements: &[Measurement]) {
         let mut sensors = self.sensors.borrow_mut();
         for measurement in measurements {
-            if let Some(watched) = sensors.get_mut(&measurement.source_id) {
-                watched.offline.saw(measurement.timestamp);
+            let Some(watched) = sensors.get_mut(&measurement.source_id) else {
+                continue;
+            };
+            watched.offline.saw(measurement.timestamp);
+            if let (Metric::Temperature, Some(watch)) =
+                (measurement.metric, watched.temperature.as_mut())
+            {
+                watch.saw(measurement.timestamp, measurement.value);
             }
         }
     }
@@ -81,16 +139,18 @@ impl Alerts {
         }
         let source_ids: Vec<SourceId> = self.sensors.borrow().keys().cloned().collect();
         for source_id in source_ids {
-            let Some((event, notification)) = self.pending(&source_id, now()) else {
-                continue;
-            };
-            match notifier.notify(&notification).await {
-                Ok(()) => {
-                    self.delivered(&source_id, event, now());
-                    self.save(store);
-                }
-                Err(error) => {
-                    warn!(source_id = source_id.as_str(), %error, "notification failed, retrying at the next check");
+            for rule in RULES {
+                let Some((event, notification)) = self.pending(&source_id, rule, now()) else {
+                    continue;
+                };
+                match notifier.notify(&notification).await {
+                    Ok(()) => {
+                        self.delivered(&source_id, event, now());
+                        self.save(store);
+                    }
+                    Err(error) => {
+                        warn!(source_id = source_id.as_str(), %error, "notification failed, retrying at the next check");
+                    }
                 }
             }
         }
@@ -99,31 +159,34 @@ impl Alerts {
     fn pending(
         &self,
         source_id: &SourceId,
+        rule: Rule,
         now: Timestamp,
-    ) -> Option<(OfflineEvent, Notification)> {
-        let sensors = self.sensors.borrow();
-        let watched = sensors.get(source_id)?;
-        let event = watched.offline.due(now)?;
-        Some((event, offline_notification(&watched.room, event)))
+    ) -> Option<(Event, Notification)> {
+        self.sensors.borrow().get(source_id)?.pending(rule, now)
     }
 
-    fn delivered(&self, source_id: &SourceId, event: OfflineEvent, now: Timestamp) {
+    fn delivered(&self, source_id: &SourceId, event: Event, now: Timestamp) {
         if let Some(watched) = self.sensors.borrow_mut().get_mut(source_id) {
-            watched.offline.delivered(event, now);
+            watched.delivered(event, now);
             info!(room = %watched.room, ?event, "notification delivered");
         }
     }
 
     fn snapshot(&self) -> AlertState {
-        let offline = self
-            .sensors
-            .borrow()
+        let sensors = self.sensors.borrow();
+        let offline = sensors
             .iter()
             .filter_map(|(source_id, watched)| Some((source_id.clone(), watched.offline.active()?)))
             .collect();
+        let temperature = sensors
+            .iter()
+            .filter_map(|(source_id, watched)| {
+                Some((source_id.clone(), watched.temperature.as_ref()?.active()?))
+            })
+            .collect();
         AlertState {
             offline,
-            ..AlertState::default()
+            temperature,
         }
     }
 
@@ -145,8 +208,8 @@ mod tests {
     use std::io;
 
     use domain::{
-        AlertState, MacAddress, Measurement, Metric, OfflineAlert, RoomName, SourceKind,
-        Thermometer, Timestamp,
+        AlertState, Deviation, MacAddress, Measurement, Metric, OfflineAlert, RoomName, SourceKind,
+        TemperatureAlert, TemperatureRange, Thermometer, Timestamp,
     };
 
     use crate::{AlertStateStore, Notification, Notifier};
@@ -157,6 +220,7 @@ mod tests {
     const MAC_OFFICE: MacAddress = MacAddress::new([0xA4, 0xC1, 0x38, 0, 0, 2]);
     const MAC_STRANGER: MacAddress = MacAddress::new([0xA4, 0xC1, 0x38, 0, 0, 9]);
     const START: i64 = 1_000_000_000_000;
+    const MINUTE: i64 = 60;
     const HOUR: i64 = 3600;
 
     struct FakeNotifier<H: Fn()> {
@@ -283,14 +347,54 @@ mod tests {
         Alerts::new(&thermometers(), store, at(now))
     }
 
-    fn reading(mac: MacAddress, secs: i64) -> Measurement {
+    fn measured(mac: MacAddress, secs: i64, metric: Metric, value: f64) -> Measurement {
         Measurement {
             timestamp: at(secs),
             source_kind: SourceKind::Ble,
             source_id: mac.into(),
-            metric: Metric::Temperature,
-            value: 21.0,
+            metric,
+            value,
         }
+    }
+
+    fn reading(mac: MacAddress, secs: i64) -> Measurement {
+        measured(mac, secs, Metric::Temperature, 21.0)
+    }
+
+    // The bedroom must stay within 18 to 20 °C; the office has no range.
+    fn ranged_alerts(store: &FakeStore, now: i64) -> Alerts {
+        let mut thermometers = thermometers();
+        thermometers[0].temperature_range =
+            Some(TemperatureRange::new(18.0, 20.0).expect("valid range"));
+        Alerts::new(&thermometers, store, at(now))
+    }
+
+    // Both sensors report at `secs`, so neither counts as silent.
+    fn live(alerts: &Alerts, secs: i64, bedroom_celsius: f64) {
+        alerts.observe(&[
+            measured(MAC_BEDROOM, secs, Metric::Temperature, bedroom_celsius),
+            reading(MAC_OFFICE, secs),
+        ]);
+    }
+
+    fn hot_alert(notified_at: i64) -> FakeStore {
+        let mut state = AlertState::default();
+        state.temperature.insert(
+            MAC_BEDROOM.into(),
+            TemperatureAlert {
+                deviation: Deviation::TooHot,
+                celsius: 21.3,
+                notified_at: at(notified_at),
+            },
+        );
+        FakeStore::holding(state)
+    }
+
+    // Leaves the bedroom with a delivered "too hot" alert at 15 minutes.
+    async fn too_hot<H: Fn()>(alerts: &Alerts, notifier: &FakeNotifier<H>, store: &FakeStore) {
+        live(alerts, 0, 21.3);
+        live(alerts, 15 * MINUTE, 21.3);
+        check(alerts, notifier, store, 15 * MINUTE).await;
     }
 
     async fn check<H: Fn()>(
@@ -546,5 +650,176 @@ mod tests {
         let saved = store.saved.borrow();
         let keys: Vec<_> = saved[0].offline.keys().cloned().collect();
         assert_eq!(keys, [MAC_BEDROOM.into()]);
+    }
+
+    #[tokio::test]
+    async fn too_hot_is_reported_after_fifteen_minutes() {
+        let store = FakeStore::new();
+        let alerts = ranged_alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        live(&alerts, 0, 21.3);
+        live(&alerts, 15 * MINUTE - 1, 21.3);
+        check(&alerts, &notifier, &store, 15 * MINUTE - 1).await;
+        assert!(notifier.sent.borrow().is_empty());
+        live(&alerts, 15 * MINUTE, 21.3);
+        check(&alerts, &notifier, &store, 15 * MINUTE).await;
+        assert_eq!(notifier.titles(), ["bedroom too hot"]);
+        assert_eq!(notifier.messages(), ["21.3 °C, allowed 18 to 20 °C."]);
+        let saved = store.saved.borrow();
+        let alert = saved[0].temperature[&MAC_BEDROOM.into()];
+        assert_eq!(alert.deviation, Deviation::TooHot);
+        assert_eq!(alert.notified_at, at(15 * MINUTE));
+    }
+
+    #[tokio::test]
+    async fn a_reading_inside_restarts_the_hold() {
+        let store = FakeStore::new();
+        let alerts = ranged_alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        live(&alerts, 0, 21.3);
+        live(&alerts, 10 * MINUTE, 21.3);
+        live(&alerts, 11 * MINUTE, 19.0);
+        live(&alerts, 12 * MINUTE, 21.3);
+        live(&alerts, 26 * MINUTE, 21.3);
+        check(&alerts, &notifier, &store, 26 * MINUTE).await;
+        assert!(notifier.sent.borrow().is_empty());
+        live(&alerts, 27 * MINUTE, 21.3);
+        check(&alerts, &notifier, &store, 27 * MINUTE).await;
+        assert_eq!(notifier.titles(), ["bedroom too hot"]);
+    }
+
+    #[tokio::test]
+    async fn hovering_at_the_limit_does_not_repeat() {
+        let store = FakeStore::new();
+        let alerts = ranged_alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        too_hot(&alerts, &notifier, &store).await;
+        for step in 4..=28 {
+            let celsius = if step % 2 == 0 { 21.3 } else { 19.0 };
+            live(&alerts, step * 5 * MINUTE, celsius);
+            check(&alerts, &notifier, &store, step * 5 * MINUTE).await;
+        }
+        assert_eq!(notifier.titles(), ["bedroom too hot"]);
+    }
+
+    #[tokio::test]
+    async fn reminder_counts_from_the_delivery() {
+        let store = FakeStore::new();
+        let alerts = ranged_alerts(&store, 0);
+        live(&alerts, 0, 21.3);
+        live(&alerts, 15 * MINUTE, 21.3);
+        let clock = Cell::new(15 * MINUTE);
+        let notifier = FakeNotifier::with_hook(|| clock.set(16 * MINUTE));
+        alerts
+            .notify_due(&notifier, &store, || at(clock.get()))
+            .await;
+        live(&alerts, 12 * HOUR + 15 * MINUTE, 22.0);
+        check(&alerts, &notifier, &store, 12 * HOUR + 15 * MINUTE).await;
+        assert_eq!(notifier.sent.borrow().len(), 1);
+        check(&alerts, &notifier, &store, 12 * HOUR + 16 * MINUTE).await;
+        assert_eq!(notifier.titles()[1], "bedroom still too hot");
+        assert_eq!(notifier.messages()[1], "22.0 °C, allowed 18 to 20 °C.");
+    }
+
+    #[tokio::test]
+    async fn resolved_after_fifteen_minutes_inside() {
+        let store = FakeStore::new();
+        let alerts = ranged_alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        too_hot(&alerts, &notifier, &store).await;
+        live(&alerts, 20 * MINUTE, 19.0);
+        live(&alerts, 34 * MINUTE, 19.0);
+        check(&alerts, &notifier, &store, 34 * MINUTE).await;
+        assert_eq!(notifier.sent.borrow().len(), 1);
+        live(&alerts, 35 * MINUTE, 19.0);
+        check(&alerts, &notifier, &store, 35 * MINUTE).await;
+        assert_eq!(notifier.titles()[1], "bedroom temperature back in range");
+        assert_eq!(notifier.messages()[1], "19.0 °C, allowed 18 to 20 °C.");
+        assert!(
+            store
+                .saved
+                .borrow()
+                .last()
+                .expect("saved")
+                .temperature
+                .is_empty()
+        );
+        check(&alerts, &notifier, &store, 36 * MINUTE).await;
+        assert_eq!(notifier.sent.borrow().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_restart_keeps_the_persisted_temperature_alert() {
+        let store = hot_alert(0);
+        let restarted = ranged_alerts(&store, 2 * HOUR);
+        let notifier = FakeNotifier::new();
+        live(&restarted, 2 * HOUR, 21.3);
+        live(&restarted, 2 * HOUR + 15 * MINUTE, 21.3);
+        check(&restarted, &notifier, &store, 2 * HOUR + 15 * MINUTE).await;
+        assert!(notifier.sent.borrow().is_empty());
+        live(&restarted, 12 * HOUR, 21.5);
+        check(&restarted, &notifier, &store, 12 * HOUR).await;
+        assert_eq!(notifier.titles(), ["bedroom still too hot"]);
+        live(&restarted, 12 * HOUR + 10 * MINUTE, 19.0);
+        live(&restarted, 12 * HOUR + 25 * MINUTE, 19.0);
+        check(&restarted, &notifier, &store, 12 * HOUR + 25 * MINUTE).await;
+        assert_eq!(notifier.titles()[1], "bedroom temperature back in range");
+    }
+
+    #[tokio::test]
+    async fn without_readings_a_reminder_names_the_last_temperature() {
+        let store = hot_alert(0);
+        let restarted = ranged_alerts(&store, 11 * HOUR);
+        let notifier = FakeNotifier::new();
+        restarted.observe(&[reading(MAC_OFFICE, 12 * HOUR)]);
+        check(&restarted, &notifier, &store, 12 * HOUR).await;
+        assert_eq!(
+            notifier.titles(),
+            ["bedroom thermometer offline", "bedroom still too hot"]
+        );
+        assert_eq!(notifier.messages()[1], "21.3 °C, allowed 18 to 20 °C.");
+    }
+
+    #[tokio::test]
+    async fn a_room_without_a_range_never_notifies() {
+        let store = FakeStore::new();
+        let alerts = ranged_alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        for step in 0..=11 {
+            let secs = step * 5 * MINUTE;
+            alerts.observe(&[
+                measured(MAC_BEDROOM, secs, Metric::Temperature, 19.0),
+                measured(MAC_OFFICE, secs, Metric::Temperature, 40.0),
+            ]);
+            check(&alerts, &notifier, &store, secs).await;
+        }
+        assert!(notifier.sent.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn humidity_does_not_feed_the_range_rule() {
+        let store = FakeStore::new();
+        let alerts = ranged_alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        for secs in [0, 20 * MINUTE] {
+            alerts.observe(&[
+                measured(MAC_BEDROOM, secs, Metric::Humidity, 90.0),
+                reading(MAC_OFFICE, secs),
+            ]);
+        }
+        check(&alerts, &notifier, &store, 20 * MINUTE).await;
+        assert!(notifier.sent.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_failed_temperature_send_is_retried() {
+        let store = FakeStore::new();
+        let alerts = ranged_alerts(&store, 0);
+        let notifier = FakeNotifier::failing(1);
+        too_hot(&alerts, &notifier, &store).await;
+        assert!(notifier.sent.borrow().is_empty());
+        assert!(store.saved.borrow().is_empty());
+        check(&alerts, &notifier, &store, 16 * MINUTE).await;
+        assert_eq!(notifier.titles(), ["bedroom too hot"]);
     }
 }
