@@ -77,6 +77,13 @@ services:
       ntfy:
         condition: service_healthy
 
+  weather-collector:
+    <<: *service
+    image: ghcr.io/jdrouet/home-monitor-weather-collector:latest
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+
 volumes:
   mosquitto-data:
   store-data:

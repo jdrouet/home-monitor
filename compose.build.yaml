@@ -7,3 +7,5 @@ services:
     build: { context: ., target: dashboard }
   alerter:
     build: { context: ., target: alerter }
+  weather-collector:
+    build: { context: ., target: weather-collector }

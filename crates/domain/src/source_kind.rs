@@ -8,12 +8,14 @@ use crate::DomainError;
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
     Ble,
+    Weather,
 }
 
 impl SourceKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Ble => "ble",
+            Self::Weather => "weather",
         }
     }
 }
@@ -24,6 +26,7 @@ impl FromStr for SourceKind {
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         match text {
             "ble" => Ok(Self::Ble),
+            "weather" => Ok(Self::Weather),
             other => Err(DomainError::UnknownSourceKind(other.to_owned())),
         }
     }
@@ -36,7 +39,9 @@ mod tests {
 
     #[test]
     fn parses_the_name_it_prints() {
-        assert_eq!(SourceKind::Ble.as_str().parse(), Ok(SourceKind::Ble));
+        for kind in [SourceKind::Ble, SourceKind::Weather] {
+            assert_eq!(kind.as_str().parse(), Ok(kind));
+        }
     }
 
     #[test]

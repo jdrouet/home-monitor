@@ -15,7 +15,7 @@ FROM chef AS builder
 COPY --from=planner /src/recipe.json recipe.json
 RUN cargo chef cook --release --locked --recipe-path recipe.json
 COPY . .
-RUN cargo build --release --locked --bin ble-collector --bin store --bin dashboard --bin alerter
+RUN cargo build --release --locked --bin ble-collector --bin store --bin dashboard --bin alerter --bin weather-collector
 
 FROM alpine:3 AS ble-collector
 COPY --from=builder /src/target/release/ble-collector /usr/local/bin/app
@@ -31,4 +31,8 @@ ENTRYPOINT ["/usr/local/bin/app"]
 
 FROM alpine:3 AS alerter
 COPY --from=builder /src/target/release/alerter /usr/local/bin/app
+ENTRYPOINT ["/usr/local/bin/app"]
+
+FROM alpine:3 AS weather-collector
+COPY --from=builder /src/target/release/weather-collector /usr/local/bin/app
 ENTRYPOINT ["/usr/local/bin/app"]

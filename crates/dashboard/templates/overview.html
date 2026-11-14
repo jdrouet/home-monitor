@@ -13,6 +13,15 @@
 <p>{% if let Some(h) = r.humidity %}{{ "{:.1}"|format(h) }} %{% else %}—{% endif %}</p>
 {% if r.freshness == Freshness::NotReporting %}<p>not reporting</p>{% endif %}
 {% endmacro %}
+<section>
+<h2>Outside</h2>
+{% if overview.outdoor.reading.freshness == Freshness::Reporting %}
+{% call reading(overview.outdoor.reading) %}{% endcall %}
+<p>Today: {% if let Some(summary) = overview.outdoor.summary %}{{ summary }}{% else %}—{% endif %} {% if let Some(min) = overview.outdoor.temperature_min %}{{ "{:.1}"|format(min) }}{% else %}—{% endif %}–{% if let Some(max) = overview.outdoor.temperature_max %}{{ "{:.1}"|format(max) }}{% else %}—{% endif %} °C</p>
+{% else %}
+<p>Weather unavailable</p>
+{% endif %}
+</section>
 {% for room in overview.rooms %}
 <section>
 <h2>{{ room.room }}</h2>

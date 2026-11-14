@@ -1,4 +1,5 @@
 mod overview_page;
+mod paris_day_start;
 mod store_client;
 
 use std::net::SocketAddr;
@@ -11,6 +12,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use config::Config;
 use domain::{Thermometer, Timestamp};
+use paris_day_start::paris_day_start;
 use reqwest::Url;
 use store_client::StoreClient;
 use tokio::net::TcpListener;
@@ -49,11 +51,15 @@ async fn serve(address: SocketAddr, app: Router) -> std::io::Result<()> {
 
 async fn overview(State(state): State<Arc<AppState>>) -> Response {
     match state.store.latest().await {
-        Ok(latest) => overview_page::render(&build_overview(
-            &state.thermometers,
-            &latest,
-            Timestamp::now(),
-        )),
+        Ok(latest) => {
+            let now = Timestamp::now();
+            overview_page::render(&build_overview(
+                &state.thermometers,
+                &latest,
+                now,
+                paris_day_start(now),
+            ))
+        }
         Err(error) => {
             error!(%error, "cannot read latest values from the store");
             (StatusCode::BAD_GATEWAY, "store unavailable").into_response()
