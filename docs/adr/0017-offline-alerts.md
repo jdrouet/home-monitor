@@ -1,6 +1,6 @@
 # ADR-0017: Offline alert decisions
 
-Status: accepted
+Status: accepted (alert state persistence superseded by ADR-0019)
 
 ## Context
 Issue #6 needs a notification when a sensor stops reporting. ADR-0004,

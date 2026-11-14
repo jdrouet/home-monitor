@@ -2,7 +2,7 @@
 
 Reads Bluetooth temperature and humidity sensors and shows the climate of each
 room on a dashboard, and sends a phone notification when a sensor stops
-reporting. It also shows the outdoor weather and today's forecast from
+reporting or a room gets too hot or too cold. It also shows the outdoor weather and today's forecast from
 Open-Meteo ([ADR-0018](docs/adr/0018-weather-collection.md)). It runs as seven
 containers: Mosquitto, ntfy, `ble-collector`, `store`, `dashboard`, `alerter`
 and `weather-collector`. The host needs BlueZ and D-Bus, because
@@ -58,6 +58,15 @@ reports again. Install the ntfy app on your phone, set the server to
 local network only; do not expose port 8081 to the internet. See
 [ADR-0017](docs/adr/0017-offline-alerts.md).
 
+It also warns when a room stays outside its temperature range for 15 minutes,
+repeats the warning every 12 hours, and says when the room is back in range. Set
+the range per room with `min_temperature` and `max_temperature` (°C) in its
+`[[thermometers]]` entry in `config.toml`; a room without them is not checked.
+`alerter` keeps the alerts it has sent in `/data/alerts.json` on the
+`alerter-data` volume (`[alerter] state_file` changes the path), so a restart
+does not repeat them. See
+[ADR-0019](docs/adr/0019-temperature-alerts-and-alert-state.md).
+
 ## Update
 
 ```sh
@@ -77,6 +86,19 @@ batches, so update in stages:
 2. Add `[weather_collector]` from `config.example.toml` to `config.toml`, with
    your latitude and longitude.
 3. Run `docker compose up -d --force-recreate` (or restart the services).
+
+### Adding temperature ranges to an existing install
+
+Older images reject the `min_temperature` and `max_temperature` keys, so update
+in stages:
+
+1. Run `git pull`, then `docker compose pull && docker compose up -d`. This
+   adds the `alerter-data` volume.
+2. Add the range keys from `config.example.toml` to the `[[thermometers]]`
+   entries in `config.toml`.
+3. Run `docker compose up -d --force-recreate` (or restart the services).
+
+To roll back to an older image, remove the range keys first.
 
 ## Build locally
 
