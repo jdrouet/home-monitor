@@ -8,8 +8,8 @@ use domain::{Measurement, Metric, SourceId, SourceKind};
 pub struct LatestValues(HashMap<(SourceKind, SourceId, Metric), Measurement>);
 
 impl LatestValues {
-    /// Keeps a measurement only when it is at least as new as the stored one,
-    /// so redelivered or reordered batches change nothing.
+    /// Replaces a stored measurement only with a strictly newer one, so
+    /// redelivered, reordered or repeated-timestamp batches change nothing.
     pub fn record(&mut self, measurements: Vec<Measurement>) {
         for measurement in measurements {
             let key = (
@@ -18,7 +18,7 @@ impl LatestValues {
                 measurement.metric,
             );
             match self.0.entry(key) {
-                Entry::Occupied(mut stored) if measurement.timestamp >= stored.get().timestamp => {
+                Entry::Occupied(mut stored) if measurement.timestamp > stored.get().timestamp => {
                     stored.insert(measurement);
                 }
                 Entry::Occupied(_) => {}
@@ -74,6 +74,17 @@ mod tests {
         assert_eq!(
             latest.snapshot(),
             [measurement(1, Metric::Temperature, 21.0, 20)]
+        );
+    }
+
+    #[test]
+    fn same_timestamp_keeps_the_first_value() {
+        let mut latest = LatestValues::default();
+        latest.record(vec![measurement(1, Metric::Temperature, 20.0, 10)]);
+        latest.record(vec![measurement(1, Metric::Temperature, 99.0, 10)]);
+        assert_eq!(
+            latest.snapshot(),
+            [measurement(1, Metric::Temperature, 20.0, 10)]
         );
     }
 
