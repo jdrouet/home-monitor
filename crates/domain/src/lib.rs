@@ -1,3 +1,5 @@
+pub mod batch;
+mod batch_error;
 mod domain_error;
 mod mac_address;
 mod measurement;
@@ -7,7 +9,9 @@ mod source_id;
 mod source_kind;
 mod thermometer;
 mod timestamp;
+pub mod topic;
 
+pub use batch_error::BatchError;
 pub use domain_error::DomainError;
 pub use mac_address::MacAddress;
 pub use measurement::Measurement;
