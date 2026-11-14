@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+domain = { path = "crates/domain" }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+wildcard_imports = "deny"
+enum_glob_use = "deny"
