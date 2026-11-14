@@ -24,7 +24,9 @@ pub fn render(overview: &Overview) -> Response {
 mod tests {
     use axum::body::to_bytes;
     use domain::{MacAddress, RoomName, SourceId};
-    use use_cases::{ClimateReading, Freshness, Overview, RoomOverview, SensorOverview};
+    use use_cases::{
+        ClimateReading, Freshness, OutdoorOverview, Overview, RoomOverview, SensorOverview,
+    };
 
     use super::render;
 
@@ -37,6 +39,15 @@ mod tests {
             temperature,
             humidity,
             freshness,
+        }
+    }
+
+    fn outdoor(freshness: Freshness) -> OutdoorOverview {
+        OutdoorOverview {
+            reading: reading(Some(4.8), Some(78.0), freshness),
+            temperature_min: Some(2.4),
+            temperature_max: Some(11.0),
+            summary: Some("Overcast"),
         }
     }
 
@@ -57,6 +68,7 @@ mod tests {
     #[tokio::test]
     async fn page_shows_rooms_and_unknown_sensors() {
         let overview = Overview {
+            outdoor: outdoor(Freshness::Reporting),
             rooms: vec![
                 room(
                     "bedroom",
@@ -81,6 +93,7 @@ mod tests {
     #[tokio::test]
     async fn unknown_section_is_hidden_when_empty() {
         let overview = Overview {
+            outdoor: outdoor(Freshness::Reporting),
             rooms: vec![room(
                 "bedroom",
                 reading(Some(20.0), Some(50.0), Freshness::Reporting),
@@ -90,5 +103,37 @@ mod tests {
         let html = page(&overview).await;
         assert!(!html.contains("Unknown sensors"));
         assert!(!html.contains("not reporting"));
+    }
+
+    #[tokio::test]
+    async fn available_weather_shows_the_outside_section() {
+        let overview = Overview {
+            outdoor: outdoor(Freshness::Reporting),
+            rooms: Vec::new(),
+            unknown_sensors: Vec::new(),
+        };
+        let html = page(&overview).await;
+        assert!(html.contains("Outside"));
+        assert!(html.contains("4.8 °C"));
+        assert!(html.contains("Overcast"));
+        assert!(html.contains("2.4–11.0 °C"));
+        assert!(!html.contains("Weather unavailable"));
+    }
+
+    #[tokio::test]
+    async fn unavailable_weather_keeps_the_rooms() {
+        let overview = Overview {
+            outdoor: outdoor(Freshness::NotReporting),
+            rooms: vec![room(
+                "bedroom",
+                reading(Some(20.0), Some(50.0), Freshness::Reporting),
+            )],
+            unknown_sensors: Vec::new(),
+        };
+        let html = page(&overview).await;
+        assert!(html.contains("Weather unavailable"));
+        assert!(!html.contains("Overcast"));
+        assert!(html.contains("bedroom"));
+        assert!(html.contains("20.0 °C"));
     }
 }

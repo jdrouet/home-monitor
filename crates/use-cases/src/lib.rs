@@ -22,7 +22,8 @@ pub use notification::Notification;
 pub use notifier::Notifier;
 pub use offline_alerts::OfflineAlerts;
 pub use overview::{
-    ClimateReading, Freshness, Overview, RoomOverview, SensorOverview, build_overview,
+    ClimateReading, Freshness, OutdoorOverview, Overview, RoomOverview, SensorOverview,
+    build_overview,
 };
 pub use publisher::Publisher;
 pub use weather_provider::WeatherProvider;
