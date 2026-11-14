@@ -1,3 +1,4 @@
+mod alert_state;
 pub mod batch;
 mod batch_error;
 mod deviation;
@@ -5,6 +6,7 @@ mod domain_error;
 mod mac_address;
 mod measurement;
 mod metric;
+mod offline_alert;
 mod offline_event;
 mod offline_watch;
 mod room_name;
@@ -19,12 +21,14 @@ mod thermometer;
 mod timestamp;
 pub mod topic;
 
+pub use alert_state::AlertState;
 pub use batch_error::BatchError;
 pub use deviation::Deviation;
 pub use domain_error::DomainError;
 pub use mac_address::MacAddress;
 pub use measurement::Measurement;
 pub use metric::Metric;
+pub use offline_alert::OfflineAlert;
 pub use offline_event::OfflineEvent;
 pub use offline_watch::{OFFLINE_AFTER, OfflineWatch, REMIND_EVERY};
 pub use room_name::RoomName;
