@@ -1,0 +1,21 @@
+[package]
+name = "dashboard"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+askama.workspace = true
+axum.workspace = true
+config.workspace = true
+domain.workspace = true
+reqwest.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+use-cases.workspace = true
+
+[lints]
+workspace = true

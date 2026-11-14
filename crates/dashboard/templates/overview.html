@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="60">
+<title>Room climate</title>
+</head>
+<body>
+<h1>Room climate</h1>
+{% macro reading(r) %}
+<p>{% if let Some(t) = r.temperature %}{{ "{:.1}"|format(t) }} °C{% else %}—{% endif %}</p>
+<p>{% if let Some(h) = r.humidity %}{{ "{:.1}"|format(h) }} %{% else %}—{% endif %}</p>
+{% if r.freshness == Freshness::NotReporting %}<p>not reporting</p>{% endif %}
+{% endmacro %}
+{% for room in overview.rooms %}
+<section>
+<h2>{{ room.room }}</h2>
+{% call reading(room.reading) %}{% endcall %}
+</section>
+{% endfor %}
+{% if !overview.unknown_sensors.is_empty() %}
+<section>
+<h2>Unknown sensors</h2>
+{% for sensor in overview.unknown_sensors %}
+<h3>{{ sensor.source_id.as_str() }}</h3>
+{% call reading(sensor.reading) %}{% endcall %}
+{% endfor %}
+</section>
+{% endif %}
+</body>
+</html>
