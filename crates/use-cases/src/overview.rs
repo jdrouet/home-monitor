@@ -177,6 +177,7 @@ mod tests {
             .map(|(mac, room)| Thermometer {
                 mac,
                 room: RoomName::try_from(room.to_owned()).expect("valid room"),
+                temperature_range: None,
             })
             .collect()
     }

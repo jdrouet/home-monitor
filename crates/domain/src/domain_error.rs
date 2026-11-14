@@ -7,4 +7,8 @@ pub enum DomainError {
     EmptyRoomName,
     #[error("unknown source kind: {0:?}")]
     UnknownSourceKind(String),
+    #[error("min_temperature and max_temperature must be set together")]
+    IncompleteTemperatureRange,
+    #[error("min_temperature must be below max_temperature, and both finite")]
+    InvalidTemperatureRange,
 }

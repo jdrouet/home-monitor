@@ -167,6 +167,43 @@ mod tests {
     }
 
     #[test]
+    fn example_sets_a_range_per_room() {
+        let config: Config = EXAMPLE.parse().expect("example is valid");
+        let ranges: Vec<_> = config
+            .thermometers
+            .iter()
+            .map(|thermometer| {
+                let range = thermometer.temperature_range.expect("range is set");
+                (range.min(), range.max())
+            })
+            .collect();
+        assert_eq!(ranges, [(18.0, 20.0), (19.0, 22.0), (19.0, 22.0)]);
+    }
+
+    #[test]
+    fn range_is_optional() {
+        let text = EXAMPLE.replace("min_temperature = 18.0\nmax_temperature = 20.0\n", "");
+        let config: Config = text.parse().expect("config is valid");
+        assert!(config.thermometers[0].temperature_range.is_none());
+        assert!(config.thermometers[1].temperature_range.is_some());
+    }
+
+    #[test]
+    fn invalid_ranges_are_rejected() {
+        for text in [
+            EXAMPLE.replace("min_temperature = 18.0\n", ""),
+            EXAMPLE.replace("max_temperature = 20.0\n", ""),
+            EXAMPLE.replace("min_temperature = 18.0", "min_temperature = 20.0"),
+            EXAMPLE.replace("min_temperature = 18.0", "min_temperature = 25.0"),
+            EXAMPLE.replace("min_temperature = 18.0", "min_temperature = nan"),
+            EXAMPLE.replace("max_temperature = 20.0", "max_temperature = inf"),
+            EXAMPLE.replace("min_temperature = 18.0", "minimum = 18.0"),
+        ] {
+            assert!(matches!(text.parse::<Config>(), Err(ConfigError::Parse(_))));
+        }
+    }
+
+    #[test]
     fn weather_section_is_optional() {
         let text = example_without(WEATHER_SECTION);
         let config: Config = text.parse().expect("config is valid");

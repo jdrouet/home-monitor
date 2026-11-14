@@ -1,5 +1,6 @@
 pub mod batch;
 mod batch_error;
+mod deviation;
 mod domain_error;
 mod mac_address;
 mod measurement;
@@ -10,11 +11,13 @@ mod room_name;
 mod series_query;
 mod source_id;
 mod source_kind;
+mod temperature_range;
 mod thermometer;
 mod timestamp;
 pub mod topic;
 
 pub use batch_error::BatchError;
+pub use deviation::Deviation;
 pub use domain_error::DomainError;
 pub use mac_address::MacAddress;
 pub use measurement::Measurement;
@@ -25,5 +28,6 @@ pub use room_name::RoomName;
 pub use series_query::SeriesQuery;
 pub use source_id::SourceId;
 pub use source_kind::SourceKind;
+pub use temperature_range::TemperatureRange;
 pub use thermometer::Thermometer;
 pub use timestamp::Timestamp;
