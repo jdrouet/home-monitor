@@ -37,8 +37,8 @@ impl Packet {
         Ok(packet)
     }
 
-    /// Records one object. `value` already has the length `object_size` gave
-    /// for `id`; skipped objects fall through the last arm.
+    /// Records one object. `value` is already length-checked for `id`;
+    /// skipped objects fall through the last arm.
     fn apply(&mut self, id: u8, value: &[u8]) {
         let mut push = |metric, value| self.readings.push(Reading { metric, value });
         match *value {
