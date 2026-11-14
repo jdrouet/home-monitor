@@ -1,6 +1,9 @@
 use std::io;
 use std::path::PathBuf;
 
+use datafusion::arrow::error::ArrowError;
+use datafusion::parquet::errors::ParquetError;
+
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
     #[error("storage I/O failed")]
@@ -12,4 +15,10 @@ pub enum StorageError {
         #[source]
         source: serde_json::Error,
     },
+    #[error("cannot read or write a day file")]
+    Parquet(#[from] ParquetError),
+    #[error("cannot build a record batch")]
+    Arrow(#[from] ArrowError),
+    #[error("invalid day file column: {0}")]
+    InvalidColumn(String),
 }
