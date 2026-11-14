@@ -14,7 +14,7 @@ use crate::{Advertisement, AdvertisementSource, Publisher};
 #[derive(Default)]
 pub struct Collector {
     last_packet_id: HashMap<MacAddress, u8>,
-    pending: BTreeMap<(SourceId, Metric), Measurement>,
+    pending: BTreeMap<SourceId, BTreeMap<Metric, Measurement>>,
 }
 
 impl Collector {
@@ -39,8 +39,8 @@ impl Collector {
         }
         let source_id = SourceId::from(advertisement.address);
         for reading in packet.readings {
-            self.pending.insert(
-                (source_id.clone(), reading.metric),
+            self.pending.entry(source_id.clone()).or_default().insert(
+                reading.metric,
                 Measurement {
                     timestamp: advertisement.received_at,
                     source_kind: SourceKind::Ble,
@@ -54,41 +54,26 @@ impl Collector {
     }
 
     /// Empties the pending measurements into one ordered batch per source.
-    pub fn drain(&mut self) -> Vec<Vec<Measurement>> {
-        let mut batches: Vec<Vec<Measurement>> = Vec::new();
-        for measurement in mem::take(&mut self.pending).into_values() {
-            match batches.last_mut() {
-                Some(batch)
-                    if batch
-                        .last()
-                        .is_some_and(|m| m.source_id == measurement.source_id) =>
-                {
-                    batch.push(measurement);
-                }
-                _ => batches.push(vec![measurement]),
-            }
-        }
-        batches
+    pub fn drain(&mut self) -> Vec<(SourceId, Vec<Measurement>)> {
+        mem::take(&mut self.pending)
+            .into_iter()
+            .map(|(source_id, metrics)| (source_id, metrics.into_values().collect()))
+            .collect()
     }
 
     /// Puts back an unpublished batch, keeping any value that arrived since.
-    fn requeue(&mut self, batch: Vec<Measurement>) {
+    fn requeue(&mut self, source_id: SourceId, batch: Vec<Measurement>) {
+        let metrics = self.pending.entry(source_id).or_default();
         for measurement in batch {
-            self.pending
-                .entry((measurement.source_id.clone(), measurement.metric))
-                .or_insert(measurement);
+            metrics.entry(measurement.metric).or_insert(measurement);
         }
     }
 
     async fn flush<P: Publisher>(&mut self, publisher: &P) {
-        for batch in self.drain() {
-            let Some(first) = batch.first() else {
-                continue;
-            };
-            let (source_kind, source_id) = (first.source_kind, first.source_id.clone());
-            if let Err(error) = publisher.publish(source_kind, &source_id, &batch).await {
+        for (source_id, batch) in self.drain() {
+            if let Err(error) = publisher.publish(SourceKind::Ble, &source_id, &batch).await {
                 warn!(source_id = source_id.as_str(), %error, "publish failed, keeping measurements for the next flush");
-                self.requeue(batch);
+                self.requeue(source_id, batch);
             }
         }
     }
@@ -159,7 +144,7 @@ mod tests {
         collector
             .drain()
             .into_iter()
-            .flatten()
+            .flat_map(|(_, batch)| batch)
             .map(|m| (m.metric, m.value))
             .collect()
     }
@@ -219,9 +204,9 @@ mod tests {
         }
         let batches = collector.drain();
         assert_eq!(batches.len(), 2);
-        assert_eq!(batches[0][0].source_id, SourceId::from(MAC_A));
-        assert_eq!(batches[1][0].source_id, SourceId::from(MAC_B));
-        assert!(batches.iter().all(|batch| batch.len() == 2));
+        assert_eq!(batches[0].0, SourceId::from(MAC_A));
+        assert_eq!(batches[1].0, SourceId::from(MAC_B));
+        assert!(batches.iter().all(|(_, batch)| batch.len() == 2));
     }
 
     #[test]
@@ -263,11 +248,14 @@ mod tests {
         collector
             .observe(&advertisement(MAC_A, 2, 2100))
             .expect("decodes");
-        collector.requeue(vec![
-            measurement(MAC_A, Metric::Temperature, 5.0, 1),
-            measurement(MAC_A, Metric::Humidity, 50.0, 1),
-        ]);
-        let batch = collector.drain().remove(0);
+        collector.requeue(
+            MAC_A.into(),
+            vec![
+                measurement(MAC_A, Metric::Temperature, 5.0, 1),
+                measurement(MAC_A, Metric::Humidity, 50.0, 1),
+            ],
+        );
+        let batch = collector.drain().remove(0).1;
         let values: Vec<_> = batch
             .iter()
             .map(|m| (m.metric, m.value, m.timestamp))
