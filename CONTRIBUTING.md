@@ -1,5 +1,24 @@
 # Contributing
 
+## Process
+
+Work follows a scrum-like process, tracked in GitHub Issues. Nothing is
+implemented without an issue.
+
+- Every piece of work is a **user story** (or a **spike** for an
+  investigation), written in plain language with acceptance criteria. Use the
+  issue template.
+- Every issue has one `type:`, one `status:`, one `priority:`, and at least one
+  `area:` label.
+- **Definition of Ready** (`status: ready`): a clear user and benefit, testable
+  acceptance criteria, no open questions, small enough for one sprint.
+  Otherwise `status: needs refinement`.
+- Work starts only on a Ready issue; move it to `status: in progress`.
+  `status: blocked` means waiting on something outside the team.
+- **Definition of Done**: acceptance criteria met and verified, reviewed,
+  merged, and the issue closed by the pull request (`Closes #<n>`).
+- Priority: `priority: now` is pulled next, then `next`, then `later`.
+
 ## Commit messages
 
 Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
