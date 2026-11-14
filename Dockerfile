@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1
 FROM rust:1-alpine AS chef
 RUN apk add --no-cache musl-dev linux-headers gcc make
+# Alpine's gcc emits outline atomics on aarch64, which Rust's musl link lacks
+# (vendored libdbus fails with undefined `__aarch64_ldadd4_sync`).
+ENV CFLAGS_aarch64_unknown_linux_musl=-mno-outline-atomics
 RUN cargo install cargo-chef --locked --version 0.1.78
 WORKDIR /src
 
