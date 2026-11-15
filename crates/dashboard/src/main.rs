@@ -1,5 +1,7 @@
 mod alerter_client;
 mod alerts_page;
+mod health_days;
+mod health_page;
 mod history_page;
 mod history_params;
 mod overview_page;
@@ -17,13 +19,19 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use config::Config;
-use domain::{Thermometer, Timestamp};
+use domain::{Measurement, SeriesQuery, Thermometer, Timestamp};
+use health_days::health_days;
 use paris_clock::paris_day_start;
 use reqwest::Url;
-use store_client::StoreClient;
+use store_client::{StoreClient, StoreClientError};
 use tokio::net::TcpListener;
 use tracing::error;
-use use_cases::{build_alert_summary, build_history, build_overview, history_query};
+use use_cases::{
+    CalendarDay, HEALTH_METRICS, build_alert_summary, build_health, build_history, build_overview,
+    history_query,
+};
+
+const HEALTH_DAYS: usize = 30;
 
 struct AppState {
     store: StoreClient,
@@ -52,6 +60,7 @@ fn app(config: &Config) -> anyhow::Result<Router> {
         .route("/", get(overview))
         .route("/history", get(history))
         .route("/alerts", get(alerts))
+        .route("/health", get(health))
         .route("/healthz", get(|| async { "ok" }))
         .route("/assets/uplot-1.6.32.min.js", get(uplot_assets::script))
         .route(
@@ -114,6 +123,42 @@ async fn alerts(State(state): State<Arc<AppState>>) -> Response {
     }
 }
 
+async fn health(State(state): State<Arc<AppState>>) -> Response {
+    let days = health_days(Timestamp::now(), HEALTH_DAYS);
+    match health_measurements(&state.store, &days).await {
+        Ok(measurements) => health_page::render(&build_health(&days, &measurements)),
+        Err(error) => {
+            error!(%error, "cannot read the health series from the store");
+            (StatusCode::BAD_GATEWAY, "store unavailable").into_response()
+        }
+    }
+}
+
+/// One store query per health metric over all of `days`, run in turn.
+async fn health_measurements(
+    store: &StoreClient,
+    days: &[CalendarDay],
+) -> Result<Vec<Measurement>, StoreClientError> {
+    let from = days
+        .last()
+        .map_or(Timestamp::from_micros(0), |day| day.start);
+    let to = days
+        .first()
+        .map_or(Timestamp::from_micros(0), |day| day.end);
+    let mut measurements = Vec::new();
+    for metric in HEALTH_METRICS {
+        let query = SeriesQuery {
+            metric,
+            source_id: None,
+            from,
+            to,
+            bucket_secs: None,
+        };
+        measurements.extend(store.series(&query).await?);
+    }
+    Ok(measurements)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -127,7 +172,7 @@ mod tests {
     use crate::alerter_client::AlerterClient;
     use crate::store_client::StoreClient;
 
-    use super::{AppState, alerts, app};
+    use super::{AppState, alerts, app, health};
 
     const EXAMPLE: &str = include_str!("../../../config.example.toml");
 
@@ -152,5 +197,17 @@ mod tests {
             .expect("body reads");
         let html = String::from_utf8(bytes.to_vec()).expect("utf-8 body");
         assert!(html.contains("Alerts unavailable"));
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_store_is_a_bad_gateway_on_the_health_page() {
+        let unreachable = Url::parse("http://127.0.0.1:1/series").expect("valid url");
+        let state = Arc::new(AppState {
+            store: StoreClient::new(unreachable.clone(), unreachable.clone()),
+            alerter: AlerterClient::new(unreachable),
+            thermometers: Vec::new(),
+        });
+        let response = health(State(state)).await;
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     }
 }

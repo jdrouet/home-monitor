@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="300">
+<title>Health</title>
+</head>
+<body>
+<h1>Health</h1>
+<p><a href="/">Overview</a> <a href="/history">History</a> <a href="/alerts">Alerts</a></p>
+<table>
+<thead>
+<tr><th>Date</th><th>Sleep</th><th>Sleep score</th><th>Resting HR (bpm)</th><th>Steps</th><th>Body Battery max</th><th>Body Battery min</th></tr>
+</thead>
+<tbody>
+{% for row in rows %}
+<tr><td>{{ row.date }}</td><td>{{ self.duration(row.sleep_seconds) }}</td><td>{{ self.number(row.sleep_score) }}</td><td>{{ self.number(row.resting_heart_rate) }}</td><td>{{ self.number(row.steps) }}</td><td>{{ self.number(row.body_battery_max) }}</td><td>{{ self.number(row.body_battery_min) }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</body>
+</html>
