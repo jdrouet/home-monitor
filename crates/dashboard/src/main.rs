@@ -95,16 +95,14 @@ async fn history(
 ) -> Response {
     let selection = history_params::parse(&pairs, &state.thermometers);
     let now = Timestamp::now();
-    match state.store.series(&history_query(&selection, now)).await {
-        Ok(rows) => {
-            let chart = build_history(&state.thermometers, &selection, now, &rows);
-            history_page::render(&selection, &state.thermometers, &chart)
-        }
-        Err(error) => {
-            error!(%error, "cannot read the series from the store");
-            (StatusCode::BAD_GATEWAY, "store unavailable").into_response()
-        }
-    }
+    let chart = state
+        .store
+        .series(&history_query(&selection, now))
+        .await
+        .inspect_err(|error| error!(%error, "cannot read the series from the store"))
+        .ok()
+        .map(|rows| build_history(&state.thermometers, &selection, now, &rows));
+    history_page::render(&selection, &state.thermometers, chart.as_ref())
 }
 
 async fn alerts(State(state): State<Arc<AppState>>) -> Response {
@@ -160,7 +158,7 @@ mod tests {
     use std::sync::Arc;
 
     use axum::body::to_bytes;
-    use axum::extract::State;
+    use axum::extract::{Query, State};
     use axum::http::StatusCode;
     use config::Config;
     use reqwest::Url;
@@ -168,7 +166,7 @@ mod tests {
     use crate::alerter_client::AlerterClient;
     use crate::store_client::StoreClient;
 
-    use super::{AppState, alerts, app, health, overview};
+    use super::{AppState, alerts, app, health, history, overview};
 
     const EXAMPLE: &str = include_str!("../../../config.example.toml");
 
@@ -212,6 +210,23 @@ mod tests {
         let alerts = html.find("Alerts unavailable").expect("alerts notice");
         let rooms = html.find("Room values unavailable").expect("rooms notice");
         assert!(alerts < rooms);
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_store_is_a_bad_gateway_on_the_history_page() {
+        let unreachable = Url::parse("http://127.0.0.1:1/series").expect("valid url");
+        let state = Arc::new(AppState {
+            store: StoreClient::new(unreachable.clone(), unreachable.clone()),
+            alerter: AlerterClient::new(unreachable),
+            thermometers: Vec::new(),
+        });
+        let response = history(State(state), Query(Vec::new())).await;
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body reads");
+        let html = String::from_utf8(bytes.to_vec()).expect("utf-8 body");
+        assert!(html.contains("History unavailable"));
     }
 
     #[tokio::test]

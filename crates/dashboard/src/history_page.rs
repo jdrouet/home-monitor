@@ -11,16 +11,25 @@ use crate::page::{self, Page};
 struct HistoryPage<'a> {
     selection: &'a HistorySelection,
     thermometers: &'a [Thermometer],
-    chart: &'a HistoryChart,
+    chart: Option<&'a HistoryChart>,
     metrics: [Metric; 2],
     periods: [Period; 4],
     page: Page,
 }
 
+impl HistoryPage<'_> {
+    fn has_readings(&self) -> bool {
+        self.chart
+            .is_some_and(|chart| chart.lines.iter().flatten().any(Option::is_some))
+    }
+}
+
+/// `None` renders the form with a notice for a store that cannot be reached,
+/// with status 502.
 pub fn render(
     selection: &HistorySelection,
     thermometers: &[Thermometer],
-    chart: &HistoryChart,
+    chart: Option<&HistoryChart>,
 ) -> Response {
     let page = HistoryPage {
         selection,
@@ -30,12 +39,14 @@ pub fn render(
         periods: Period::ALL,
         page: Page::History,
     };
-    page::respond(&page, StatusCode::OK)
+    let status = chart.map_or(StatusCode::BAD_GATEWAY, |_| StatusCode::OK);
+    page::respond(&page, status)
 }
 
 #[cfg(test)]
 mod tests {
     use axum::body::to_bytes;
+    use axum::http::StatusCode;
     use domain::{MacAddress, Metric, RoomName, Thermometer};
     use use_cases::{HistoryChart, HistorySelection, Period};
 
@@ -75,14 +86,24 @@ mod tests {
         }
     }
 
-    async fn page(rooms: &[&str], selected: &HistorySelection, chart: &HistoryChart) -> String {
-        let bytes = to_bytes(
-            render(selected, &thermometers(rooms), chart).into_body(),
-            usize::MAX,
+    async fn response(
+        rooms: &[&str],
+        selected: &HistorySelection,
+        chart: Option<&HistoryChart>,
+    ) -> (StatusCode, String) {
+        let response = render(selected, &thermometers(rooms), chart);
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body reads");
+        (
+            status,
+            String::from_utf8(bytes.to_vec()).expect("utf-8 body"),
         )
-        .await
-        .expect("body reads");
-        String::from_utf8(bytes.to_vec()).expect("utf-8 body")
+    }
+
+    async fn page(rooms: &[&str], selected: &HistorySelection, chart: &HistoryChart) -> String {
+        response(rooms, selected, Some(chart)).await.1
     }
 
     #[tokio::test]
@@ -92,10 +113,12 @@ mod tests {
         assert!(html.contains(r#"value="bedroom">"#));
         assert!(html.contains(r#"value="office" checked>"#));
         assert!(html.contains(r#"name="outside" value="on" checked>"#));
-        assert!(html.contains(r#"<option value="7d" selected>"#));
-        assert!(html.contains(r#"<option value="24h">"#));
-        assert!(html.contains(r#"<option value="temperature" selected>"#));
-        assert!(html.contains(r#"<option value="humidity">"#));
+        assert!(html.contains(r#"value="7d" checked>"#));
+        assert!(html.contains(r#"value="24h">"#));
+        assert!(html.contains(r#"value="temperature" checked>"#));
+        assert!(html.contains(r#"value="humidity">"#));
+        assert!(html.contains("Temperature, last 7 days"));
+        assert!(html.contains("Update chart"));
     }
 
     #[tokio::test]
@@ -107,15 +130,42 @@ mod tests {
 
     #[tokio::test]
     async fn the_page_links_the_assets_and_the_overview() {
-        let selected = selection(&[], false, Period::Day);
-        let html = page(&[], &selected, &chart(&[])).await;
+        let selected = selection(&["office"], false, Period::Day);
+        let html = page(&["office"], &selected, &chart(&["office"])).await;
         assert!(html.contains(r#"href="/assets/uplot-1.6.32.min.css""#));
         assert!(html.contains(r#"src="/assets/uplot-1.6.32.min.js""#));
         assert_shell(&html, Page::History);
         assert!(!html.contains("location.reload"));
         assert!(html.contains(r#"<div id="chart">"#));
         assert!(html.contains("const timestamps = [0,900];"));
-        assert!(html.contains("const lines = [];"));
+        assert!(html.contains("const lines = [[1.5,null]];"));
+        assert!(html.contains(r#"token("--chart-" + "#));
+    }
+
+    #[tokio::test]
+    async fn no_readings_shows_the_empty_notice() {
+        let selected = selection(&["office"], false, Period::Day);
+        let empty = HistoryChart {
+            labels: vec!["office".to_owned()],
+            timestamps: vec![0, 900],
+            lines: vec![vec![None, None]],
+        };
+        let (status, html) = response(&["office"], &selected, Some(&empty)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("No readings in this period."));
+        assert!(!html.contains(r#"<div id="chart">"#));
+        assert!(!html.contains("const timestamps"));
+    }
+
+    #[tokio::test]
+    async fn an_unavailable_store_keeps_the_form_and_shows_the_notice() {
+        let selected = selection(&["office"], false, Period::Day);
+        let (status, html) = response(&["office"], &selected, None).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(html.contains("History unavailable"));
+        assert!(html.contains(r#"value="office" checked>"#));
+        assert!(!html.contains("No readings in this period."));
+        assert_shell(&html, Page::History);
     }
 
     #[tokio::test]
