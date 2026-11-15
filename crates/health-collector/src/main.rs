@@ -13,11 +13,15 @@ use config::{HealthCollectorConfig, MqttConfig};
 use domain::{SourceId, Timestamp};
 use garmin_connect::{GarminConnect, TokenFile};
 use mqtt::MqttPublisher;
+use paris_clock::paris_date;
 use prompt::prompt_line;
-use schedule::{next_pull, pull_days, wait_until};
+use schedule::{completed_day_stamp, next_pull, pull_days, wait_until};
+use state_file::BackfillFile;
 use tokio::net::TcpListener;
 use tokio::time::sleep;
-use use_cases::{HealthProvider, Publisher, collect_health};
+use use_cases::{
+    BackfillStore, HealthBackfill, HealthProvider, HealthPull, Publisher, collect_health,
+};
 
 const CLIENT_ID: &str = "health-collector";
 const SOURCE_ID: &str = "garmin";
@@ -74,25 +78,44 @@ async fn collect(mqtt: &MqttConfig, health: &HealthCollectorConfig) -> anyhow::R
     let router = Router::new().route("/healthz", get(|| async { "ok" }));
     let provider = GarminConnect::new(TokenFile::new(health.token_file.clone()))?;
     let publisher = MqttPublisher::connect(&mqtt.host, mqtt.port, CLIENT_ID);
+    let backfill_store =
+        BackfillFile::new(health.token_file.with_file_name("garmin_backfill.json"));
     let source_id = SourceId::from(SOURCE_ID.to_owned());
     tokio::select! {
         served = axum::serve(listener, router) => Err(anyhow!("health server ended: {served:?}")),
-        never = pull_forever(&provider, &publisher, &source_id) => match never {},
+        never = pull_forever(&provider, &publisher, &backfill_store, &source_id) => match never {},
     }
 }
 
 /// Pulls at startup, then at every daily pull time. The next deadline is
 /// fixed before a pull starts, so a slow pull cannot skip it. A failed pull
-/// is not retried before the next one.
-async fn pull_forever<H: HealthProvider, P: Publisher>(
+/// is not retried before the next one. After a completed pull the backfill
+/// runs until shortly before the next deadline.
+async fn pull_forever<H: HealthProvider, P: Publisher, S: BackfillStore>(
     provider: &H,
     publisher: &P,
+    backfill_store: &S,
     source_id: &SourceId,
 ) -> Infallible {
     loop {
         let started = Timestamp::now();
         let next = next_pull(started);
-        collect_health(provider, publisher, source_id, &pull_days(started)).await;
+        let pull = collect_health(provider, publisher, source_id, &pull_days(started)).await;
+        if pull == HealthPull::Completed {
+            HealthBackfill {
+                provider,
+                publisher,
+                store: backfill_store,
+                source_id,
+            }
+            .run(
+                paris_date(started),
+                next,
+                Timestamp::now,
+                completed_day_stamp,
+            )
+            .await;
+        }
         sleep(wait_until(next, Timestamp::now())).await;
     }
 }

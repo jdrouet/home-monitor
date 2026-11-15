@@ -1789,6 +1789,7 @@ dependencies = [
  "mqtt",
  "paris-clock",
  "rpassword",
+ "state-file",
  "tokio",
  "tracing-subscriber",
  "use-cases",

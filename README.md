@@ -123,6 +123,12 @@ update in stages:
 4. Without a token file the collector stays up and logs a failed session at
    each pull. When the log reports a failed session later, the refresh token
    has expired or was revoked: repeat step 3.
+5. After the first completed pull the collector imports the past year once,
+   over about 7 hours at about 2 requests per minute
+   ([ADR-0023](docs/adr/0023-health-backfill.md)). Progress is in
+   `garmin_backfill.json` on the token volume. Deleting that file restarts
+   the import; days already stored are not duplicated. A corrupt file is
+   logged and the import is skipped until you remove it.
 
 ### Adding temperature ranges to an existing install
 
