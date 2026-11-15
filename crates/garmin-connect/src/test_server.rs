@@ -9,6 +9,7 @@ use tokio::task::JoinHandle;
 pub struct Reply {
     status: u16,
     set_cookie: Option<&'static str>,
+    location: Option<String>,
     body: String,
 }
 
@@ -17,7 +18,16 @@ impl Reply {
         Self {
             status,
             set_cookie: None,
+            location: None,
             body: body.to_owned(),
+        }
+    }
+
+    /// A 302 pointing at `location`.
+    pub fn redirect(location: &str) -> Self {
+        Self {
+            location: Some(location.to_owned()),
+            ..Self::status(302)
         }
     }
 
@@ -35,8 +45,13 @@ impl Reply {
             .set_cookie
             .map(|cookie| format!("set-cookie: {cookie}\r\n"))
             .unwrap_or_default();
+        let location = self
+            .location
+            .as_ref()
+            .map(|location| format!("location: {location}\r\n"))
+            .unwrap_or_default();
         format!(
-            "HTTP/1.1 {} Scripted\r\ncontent-type: application/json\r\n{cookie}content-length: {}\r\nconnection: close\r\n\r\n{}",
+            "HTTP/1.1 {} Scripted\r\ncontent-type: application/json\r\n{cookie}{location}content-length: {}\r\nconnection: close\r\n\r\n{}",
             self.status,
             self.body.len(),
             self.body

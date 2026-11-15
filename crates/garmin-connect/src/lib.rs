@@ -7,6 +7,7 @@ mod garmin_error;
 mod garmin_session;
 mod login;
 mod native_headers;
+mod pacer;
 mod read_json;
 mod social_profile;
 mod sso_response;
