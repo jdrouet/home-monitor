@@ -49,12 +49,12 @@ impl<H: HealthProvider, P: Publisher, S: BackfillStore> HealthBackfill<'_, H, P,
         };
         let mut opened = None;
         while !cursor.is_done() {
-            let Some(open) = self.session(opened.take(), until, &clock).await else {
-                return;
-            };
             if !turn(until, &clock).await {
                 return;
             }
+            let Some(open) = self.session(opened.take(), until, &clock).await else {
+                return;
+            };
             let date = cursor.next;
             if let Step::Stop = self.day(&open.session, date, day_stamp(date)).await {
                 return;
@@ -237,6 +237,7 @@ mod tests {
         fetch_delay: Duration,
         results: HashMap<NaiveDate, Result<DailyHealth, TestError>>,
         opens: AtomicUsize,
+        opens_at_fetch: Mutex<Vec<usize>>,
         fetched: Mutex<Vec<NaiveDate>>,
     }
 
@@ -265,6 +266,7 @@ mod tests {
 
         async fn daily(&self, _session: &(), date: NaiveDate) -> Result<DailyHealth, TestError> {
             self.fetched.lock().expect("lock").push(date);
+            self.opens_at_fetch.lock().expect("lock").push(self.opens());
             sleep(self.fetch_delay).await;
             self.results
                 .get(&date)
@@ -607,6 +609,20 @@ mod tests {
         run(&provider, &publisher, &store, DAY).await;
         assert_eq!(provider.fetched().len(), 12);
         assert_eq!(provider.opens(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_session_age_is_checked_after_the_pacing_wait() {
+        let provider = TestProvider::default();
+        let publisher = TestPublisher::default();
+        let store = TestStore::holding(BackfillCursor {
+            next: jan(1),
+            last: jan(31),
+        });
+        run(&provider, &publisher, &store, DAY).await;
+        let seen = provider.opens_at_fetch.lock().expect("lock").clone();
+        assert_eq!(seen[29], 1);
+        assert_eq!(seen[30], 2);
     }
 
     #[tokio::test(start_paused = true)]
