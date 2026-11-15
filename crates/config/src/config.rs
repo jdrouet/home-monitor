@@ -172,7 +172,7 @@ mod tests {
 
     const WEATHER_SECTION: &str = "[weather_collector]\nhttp_listen = \"0.0.0.0:8080\"\n# Outdoor weather location (Open-Meteo), in decimal degrees.\nlatitude = 48.8566\nlongitude = 2.3522\n\n";
 
-    const HEALTH_SECTION: &str = "[health_collector]\n# Garmin tokens come from `health-collector login`.\nhttp_listen = \"0.0.0.0:8080\"\n\n";
+    const HEALTH_SECTION: &str = "[health_collector]\n# Garmin tokens come from `health-collector login`.\nhttp_listen = \"0.0.0.0:8080\"\n# archive_dir = \"/archive/garmin\"\n\n";
 
     fn example_without(section: &str) -> String {
         EXAMPLE.replace(section, "")
