@@ -45,9 +45,9 @@ fn day_batch(day: i64) -> Vec<Measurement> {
     rows
 }
 
-async fn store_days(dir: &Path, days: i64) -> ParquetStore {
+async fn store_days(dir: &Path, first_day: i64, days: i64) -> ParquetStore {
     let store = ParquetStore::open(dir).expect("open");
-    for day in 0..days {
+    for day in first_day..first_day + days {
         store.append(day_batch(day)).expect("append");
         store
             .flush_due(Timestamp::from_micros((day + 1) * DAY + 1))
@@ -57,12 +57,12 @@ async fn store_days(dir: &Path, days: i64) -> ParquetStore {
     store
 }
 
-fn daily(days: i64) -> SeriesQuery {
+fn daily(first_day: i64, days: i64) -> SeriesQuery {
     SeriesQuery {
         metric: Metric::Temperature,
         source_id: None,
-        from: Timestamp::from_micros(0),
-        to: Timestamp::from_micros(days * DAY),
+        from: Timestamp::from_micros(first_day * DAY),
+        to: Timestamp::from_micros((first_day + days) * DAY),
         bucket_secs: NonZeroU32::new(86_400),
     }
 }
@@ -70,8 +70,8 @@ fn daily(days: i64) -> SeriesQuery {
 #[tokio::test]
 async fn daily_buckets_average_each_source() {
     let dir = TempDir::new().expect("tempdir");
-    let store = store_days(dir.path(), 3).await;
-    let rows = store.series(&daily(3)).await.expect("series");
+    let store = store_days(dir.path(), 0, 3).await;
+    let rows = store.series(&daily(0, 3)).await.expect("series");
 
     assert_eq!(rows.len(), 15);
     for row in rows {
@@ -90,7 +90,8 @@ fn median(mut durations: Vec<Duration>) -> Duration {
     durations[durations.len() / 2]
 }
 
-// Diagnostic timing: `YEAR_DATA_DIR` keeps the generated year for other runs.
+// Diagnostic timing over the year ending today. `YEAR_DATA_DIR` keeps the
+// generated data for other runs.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "generates a year of data"]
 async fn one_year_daily_query_duration() {
@@ -102,13 +103,14 @@ async fn one_year_daily_query_duration() {
             scratch.path().to_owned()
         }
     };
+    let today = Timestamp::now().as_micros() / DAY;
     let started = Instant::now();
-    drop(store_days(&dir, 365).await);
+    drop(store_days(&dir, today - 365, 365).await);
     println!("generation: {:?}", started.elapsed());
 
     let store = ParquetStore::open(&dir).expect("reopen");
-    store.append(day_batch(365)).expect("today");
-    let query = daily(366);
+    store.append(day_batch(today)).expect("today");
+    let query = daily(today - 365, 366);
     let mut durations = Vec::new();
     for _ in 0..5 {
         let started = Instant::now();
