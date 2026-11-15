@@ -384,6 +384,7 @@ mod tests {
             TemperatureAlert {
                 deviation: Deviation::TooHot,
                 celsius: 21.3,
+                since: at(notified_at),
                 notified_at: at(notified_at),
             },
         );
@@ -412,6 +413,7 @@ mod tests {
             MAC_BEDROOM.into(),
             OfflineAlert {
                 last_seen: at(0),
+                since: at(HOUR),
                 notified_at: at(HOUR),
             },
         );
@@ -639,6 +641,7 @@ mod tests {
             MAC_STRANGER.into(),
             OfflineAlert {
                 last_seen: at(0),
+                since: at(HOUR),
                 notified_at: at(HOUR),
             },
         );

@@ -12,22 +12,30 @@ pub const REMIND_EVERY: Duration = Duration::from_secs(12 * 60 * 60);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OfflineWatch {
     last_seen: Timestamp,
-    notified_at: Option<Timestamp>,
+    notified: Option<Notified>,
+}
+
+/// The delivered alert: when its episode began and when it was last notified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Notified {
+    since: Timestamp,
+    at: Timestamp,
 }
 
 impl OfflineWatch {
     pub const fn new(baseline: Timestamp) -> Self {
         Self {
             last_seen: baseline,
-            notified_at: None,
+            notified: None,
         }
     }
 
     /// The alert delivered and not yet resolved, if any.
     pub fn active(&self) -> Option<OfflineAlert> {
-        self.notified_at.map(|notified_at| OfflineAlert {
+        self.notified.map(|notified| OfflineAlert {
             last_seen: self.last_seen,
-            notified_at,
+            since: notified.since,
+            notified_at: notified.at,
         })
     }
 
@@ -40,9 +48,9 @@ impl OfflineWatch {
     /// through `delivered`.
     pub fn due(&self, now: Timestamp) -> Option<OfflineEvent> {
         let silent_for = now.duration_since(self.last_seen);
-        match (silent_for >= OFFLINE_AFTER, self.notified_at) {
+        match (silent_for >= OFFLINE_AFTER, self.notified) {
             (true, None) => Some(OfflineEvent::Offline { silent_for }),
-            (true, Some(at)) if now.duration_since(at) >= REMIND_EVERY => {
+            (true, Some(n)) if now.duration_since(n.at) >= REMIND_EVERY => {
                 Some(OfflineEvent::StillOffline { silent_for })
             }
             (false, Some(_)) => Some(OfflineEvent::Back),
@@ -52,8 +60,15 @@ impl OfflineWatch {
 
     /// Records that `event` was accepted by the notifier at `now`.
     pub fn delivered(&mut self, event: OfflineEvent, now: Timestamp) {
-        self.notified_at = match event {
-            OfflineEvent::Offline { .. } | OfflineEvent::StillOffline { .. } => Some(now),
+        self.notified = match event {
+            OfflineEvent::Offline { .. } => Some(Notified {
+                since: now,
+                at: now,
+            }),
+            OfflineEvent::StillOffline { .. } => Some(Notified {
+                since: self.notified.map_or(now, |n| n.since),
+                at: now,
+            }),
             OfflineEvent::Back => None,
         };
     }
@@ -63,7 +78,10 @@ impl From<OfflineAlert> for OfflineWatch {
     fn from(alert: OfflineAlert) -> Self {
         Self {
             last_seen: alert.last_seen,
-            notified_at: Some(alert.notified_at),
+            notified: Some(Notified {
+                since: alert.since,
+                at: alert.notified_at,
+            }),
         }
     }
 }
@@ -164,6 +182,7 @@ mod tests {
     fn a_restored_alert_reminds_twelve_hours_after_its_notification() {
         let mut watch = OfflineWatch::from(OfflineAlert {
             last_seen: at(0),
+            since: at(3600),
             notified_at: at(3600),
         });
         assert_eq!(watch.due(at(3600 + 12 * 3600 - 1)), None);
@@ -181,6 +200,7 @@ mod tests {
     fn the_active_alert_round_trips() {
         let alert = OfflineAlert {
             last_seen: at(10),
+            since: at(3000),
             notified_at: at(3610),
         };
         assert_eq!(OfflineWatch::from(alert).active(), Some(alert));
@@ -189,6 +209,17 @@ mod tests {
             notified_offline().active().map(|a| a.notified_at),
             Some(at(3600))
         );
+    }
+
+    #[test]
+    fn reminders_keep_the_onset() {
+        let mut watch = notified_offline();
+        let reminder_at = at(3600 + 12 * 3600);
+        let event = watch.due(reminder_at).expect("reminder is due");
+        watch.delivered(event, reminder_at);
+        let alert = watch.active().expect("still active");
+        assert_eq!(alert.since, at(3600));
+        assert_eq!(alert.notified_at, reminder_at);
     }
 
     #[test]
