@@ -6,8 +6,8 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-askama.workspace = true
-axum.workspace = true
+askama = { workspace = true, features = ["serde_json"] }
+axum = { workspace = true, features = ["query"] }
 chrono.workspace = true
 chrono-tz = "0.10.4"
 config.workspace = true

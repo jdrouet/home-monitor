@@ -136,4 +136,14 @@ mod tests {
         assert!(html.contains("bedroom"));
         assert!(html.contains("20.0 °C"));
     }
+
+    #[tokio::test]
+    async fn page_links_to_the_history() {
+        let overview = Overview {
+            outdoor: outdoor(Freshness::Reporting),
+            rooms: Vec::new(),
+            unknown_sensors: Vec::new(),
+        };
+        assert!(page(&overview).await.contains(r#"href="/history""#));
+    }
 }

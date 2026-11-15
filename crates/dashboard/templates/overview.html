@@ -8,6 +8,7 @@
 </head>
 <body>
 <h1>Room climate</h1>
+<p><a href="/history">History</a></p>
 {% macro reading(r) %}
 <p>{% if let Some(t) = r.temperature %}{{ "{:.1}"|format(t) }} °C{% else %}—{% endif %}</p>
 <p>{% if let Some(h) = r.humidity %}{{ "{:.1}"|format(h) }} %{% else %}—{% endif %}</p>

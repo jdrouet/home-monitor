@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Room climate history</title>
+<link rel="stylesheet" href="/assets/uplot-1.6.32.min.css">
+<script src="/assets/uplot-1.6.32.min.js"></script>
+</head>
+<body>
+<h1>Room climate history</h1>
+<p><a href="/">Overview</a></p>
+<form method="get" action="/history">
+<label>Metric
+<select name="metric">
+{% for metric in metrics %}
+<option value="{{ metric.as_str() }}"{% if *metric == selection.metric %} selected{% endif %}>{{ metric.as_str() }}</option>
+{% endfor %}
+</select>
+</label>
+<label>Period
+<select name="period">
+{% for period in periods %}
+<option value="{{ period.as_str() }}"{% if *period == selection.period %} selected{% endif %}>{{ period.as_str() }}</option>
+{% endfor %}
+</select>
+</label>
+{% for thermometer in thermometers %}
+<label><input type="checkbox" name="room" value="{{ thermometer.room }}"{% if selection.shows_room(thermometer.room) %} checked{% endif %}> {{ thermometer.room }}</label>
+{% endfor %}
+<label><input type="checkbox" name="outside" value="on"{% if selection.include_outside %} checked{% endif %}> Outside</label>
+<button type="submit">Show</button>
+</form>
+<div id="chart"></div>
+<script>
+const labels = {{ chart.labels|json|safe }};
+const timestamps = {{ chart.timestamps|json|safe }};
+const lines = {{ chart.lines|json|safe }};
+const palette = ["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd", "#8c564b", "#e377c2", "#17becf"];
+const element = document.getElementById("chart");
+new uPlot({
+  width: Math.max(300, element.clientWidth),
+  height: 360,
+  tzDate: (ts) => uPlot.tzDate(new Date(ts * 1000), "Europe/Paris"),
+  series: [{}].concat(labels.map((label, i) => ({ label: label, stroke: palette[i % palette.length], width: 2 }))),
+}, [timestamps].concat(lines), element);
+</script>
+</body>
+</html>
