@@ -9,6 +9,7 @@ use crate::DomainError;
 pub enum SourceKind {
     Ble,
     Weather,
+    Health,
 }
 
 impl SourceKind {
@@ -16,6 +17,7 @@ impl SourceKind {
         match self {
             Self::Ble => "ble",
             Self::Weather => "weather",
+            Self::Health => "health",
         }
     }
 }
@@ -27,6 +29,7 @@ impl FromStr for SourceKind {
         match text {
             "ble" => Ok(Self::Ble),
             "weather" => Ok(Self::Weather),
+            "health" => Ok(Self::Health),
             other => Err(DomainError::UnknownSourceKind(other.to_owned())),
         }
     }
@@ -39,7 +42,7 @@ mod tests {
 
     #[test]
     fn parses_the_name_it_prints() {
-        for kind in [SourceKind::Ble, SourceKind::Weather] {
+        for kind in [SourceKind::Ble, SourceKind::Weather, SourceKind::Health] {
             assert_eq!(kind.as_str().parse(), Ok(kind));
         }
     }
