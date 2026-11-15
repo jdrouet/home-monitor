@@ -7,6 +7,8 @@ mod history_params;
 mod overview_page;
 mod page;
 mod paris_time;
+#[cfg(test)]
+mod preview;
 mod store_client;
 mod uplot_assets;
 
