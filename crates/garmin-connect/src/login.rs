@@ -77,19 +77,28 @@ impl GarminConnect {
     }
 
     async fn load_sign_in_page(&self, jar: &mut CookieJar) -> Result<(), GarminError> {
+        let sso = self.endpoints.sso.origin();
+        let mut after_sso = false;
         let response = self
-            .get_following(self.sign_in_url(), SSO_REDIRECTS, |request, _, previous| {
-                if let Some(headers) = previous {
-                    jar.store(headers);
-                }
-                let request = request.headers(browser_headers(HTML_ACCEPT));
-                match jar.header() {
-                    Some(cookie) => request.header(COOKIE, cookie),
-                    None => request,
-                }
-            })
+            .get_following(
+                self.sign_in_url(),
+                SSO_REDIRECTS,
+                |request, url, previous| {
+                    if let (true, Some(headers)) = (after_sso, previous) {
+                        jar.store(headers);
+                    }
+                    after_sso = url.origin() == sso;
+                    let request = request.headers(browser_headers(HTML_ACCEPT));
+                    match jar.header() {
+                        Some(cookie) if after_sso => request.header(COOKIE, cookie),
+                        _ => request,
+                    }
+                },
+            )
             .await?;
-        jar.store(response.headers());
+        if response.url().origin() == sso {
+            jar.store(response.headers());
+        }
         let status = response.status();
         check_not_blocked(status)?;
         if status.is_success() {
@@ -346,6 +355,29 @@ mod tests {
         );
         assert!(requests[1].has_header("cookie: session=abc"));
         assert!(requests[2].has_header("cookie: extra=1; session=abc"));
+    }
+
+    #[tokio::test]
+    async fn a_redirect_off_the_sso_host_gets_no_cookies_and_sets_none() {
+        let elsewhere = TestServer::start(vec![
+            Reply::new(200, "<html></html>").with_cookie("foreign=1"),
+        ])
+        .await;
+        let landing = format!("{}landing", elsewhere.base);
+        let replies = vec![
+            Reply::redirect(&landing).with_cookie("session=abc; Path=/"),
+            Reply::new(200, SUCCESS),
+            Reply::new(200, DI_TOKEN),
+            Reply::new(200, PROFILE),
+        ];
+        let run = run(replies).await;
+        run.result.as_ref().expect("login succeeds");
+        let requests = elsewhere.requests();
+        assert_eq!(requests.len(), 1);
+        assert!(!requests[0].has_header("cookie:"));
+        let login = &run.server.requests()[1];
+        assert!(login.has_header("cookie: session=abc"));
+        assert!(!login.has_header("foreign=1"));
     }
 
     #[tokio::test]
