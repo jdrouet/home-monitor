@@ -1,6 +1,7 @@
 mod advertisement;
 mod advertisement_source;
 mod alert_state_store;
+mod alert_summary;
 mod alerts;
 mod collect_weather;
 mod collector;
@@ -19,6 +20,7 @@ mod weather_report;
 pub use advertisement::Advertisement;
 pub use advertisement_source::AdvertisementSource;
 pub use alert_state_store::AlertStateStore;
+pub use alert_summary::{ActiveAlertLine, AlertSummary, ResolvedAlertLine, build_alert_summary};
 pub use alerts::Alerts;
 pub use collect_weather::collect_weather;
 pub use collector::Collector;
