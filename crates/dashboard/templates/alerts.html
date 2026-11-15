@@ -10,7 +10,7 @@
 {% else %}
 <ul class="alert-list">
 {% for line in summary.active %}
-<li><span class="badge badge--alert">{% call macros::alert_kind(line.kind) %}{% endcall %}</span><strong class="alert-subject">{{ line.subject }}</strong>{% if let Some(celsius) = line.celsius %}<span class="alert-detail">{{ "{:.1}"|format(celsius) }} °C at last notification</span>{% endif %}<span class="alert-time">since {{ self.time(line.since) }}</span></li>
+{% call macros::active_alert(line) %}{% endcall %}
 {% endfor %}
 </ul>
 {% endif %}
@@ -22,7 +22,7 @@
 {% else %}
 <ul class="alert-list">
 {% for line in summary.resolved %}
-<li><span class="badge badge--neutral">{% call macros::alert_kind(line.kind) %}{% endcall %}</span><strong class="alert-subject">{{ line.subject }}</strong><span class="alert-time">{{ self.time(line.started) }} – {{ self.time(line.ended) }}</span></li>
+<li><span class="badge badge--neutral">{% call macros::alert_kind(line.kind) %}{% endcall %}</span><strong class="alert-subject">{{ line.subject }}</strong><span class="alert-time">{{ crate::paris_time::paris_time(*line.started) }} – {{ crate::paris_time::paris_time(*line.ended) }}</span></li>
 {% endfor %}
 </ul>
 {% endif %}

@@ -157,16 +157,26 @@ async fn health_measurements(
 mod tests {
     use std::sync::Arc;
 
-    use axum::body::to_bytes;
     use axum::extract::{Query, State};
     use axum::http::StatusCode;
     use config::Config;
     use reqwest::Url;
 
     use crate::alerter_client::AlerterClient;
+    use crate::page::read;
     use crate::store_client::StoreClient;
 
     use super::{AppState, alerts, app, health, history, overview};
+
+    /// A state whose store and alerter refuse every connection.
+    fn unreachable_state() -> Arc<AppState> {
+        let unreachable = Url::parse("http://127.0.0.1:1/").expect("valid url");
+        Arc::new(AppState {
+            store: StoreClient::new(unreachable.clone(), unreachable.clone()),
+            alerter: AlerterClient::new(unreachable),
+            thermometers: Vec::new(),
+        })
+    }
 
     const EXAMPLE: &str = include_str!("../../../config.example.toml");
 
@@ -178,35 +188,17 @@ mod tests {
 
     #[tokio::test]
     async fn an_unreachable_alerter_is_a_bad_gateway_with_a_notice() {
-        let unreachable = Url::parse("http://127.0.0.1:1/alerts").expect("valid url");
-        let state = Arc::new(AppState {
-            store: StoreClient::new(unreachable.clone(), unreachable.clone()),
-            alerter: AlerterClient::new(unreachable),
-            thermometers: Vec::new(),
-        });
-        let response = alerts(State(state)).await;
-        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-        let bytes = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("body reads");
-        let html = String::from_utf8(bytes.to_vec()).expect("utf-8 body");
+        let state = unreachable_state();
+        let (status, html) = read(alerts(State(state)).await).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert!(html.contains("Alerts unavailable"));
     }
 
     #[tokio::test]
     async fn an_unreachable_store_and_alerter_render_both_notices() {
-        let unreachable = Url::parse("http://127.0.0.1:1/latest").expect("valid url");
-        let state = Arc::new(AppState {
-            store: StoreClient::new(unreachable.clone(), unreachable.clone()),
-            alerter: AlerterClient::new(unreachable),
-            thermometers: Vec::new(),
-        });
-        let response = overview(State(state)).await;
-        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-        let bytes = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("body reads");
-        let html = String::from_utf8(bytes.to_vec()).expect("utf-8 body");
+        let state = unreachable_state();
+        let (status, html) = read(overview(State(state)).await).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
         let alerts = html.find("Alerts unavailable").expect("alerts notice");
         let rooms = html.find("Room values unavailable").expect("rooms notice");
         assert!(alerts < rooms);
@@ -214,35 +206,17 @@ mod tests {
 
     #[tokio::test]
     async fn an_unreachable_store_is_a_bad_gateway_on_the_history_page() {
-        let unreachable = Url::parse("http://127.0.0.1:1/series").expect("valid url");
-        let state = Arc::new(AppState {
-            store: StoreClient::new(unreachable.clone(), unreachable.clone()),
-            alerter: AlerterClient::new(unreachable),
-            thermometers: Vec::new(),
-        });
-        let response = history(State(state), Query(Vec::new())).await;
-        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-        let bytes = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("body reads");
-        let html = String::from_utf8(bytes.to_vec()).expect("utf-8 body");
+        let state = unreachable_state();
+        let (status, html) = read(history(State(state), Query(Vec::new())).await).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert!(html.contains("History unavailable"));
     }
 
     #[tokio::test]
     async fn an_unreachable_store_is_a_bad_gateway_on_the_health_page() {
-        let unreachable = Url::parse("http://127.0.0.1:1/series").expect("valid url");
-        let state = Arc::new(AppState {
-            store: StoreClient::new(unreachable.clone(), unreachable.clone()),
-            alerter: AlerterClient::new(unreachable),
-            thermometers: Vec::new(),
-        });
-        let response = health(State(state)).await;
-        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-        let bytes = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("body reads");
-        let html = String::from_utf8(bytes.to_vec()).expect("utf-8 body");
+        let state = unreachable_state();
+        let (status, html) = read(health(State(state)).await).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert!(html.contains("Health data unavailable"));
     }
 }

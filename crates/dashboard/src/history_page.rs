@@ -45,12 +45,11 @@ pub fn render(
 
 #[cfg(test)]
 mod tests {
-    use axum::body::to_bytes;
     use axum::http::StatusCode;
     use domain::{MacAddress, Metric, RoomName, Thermometer};
     use use_cases::{HistoryChart, HistorySelection, Period};
 
-    use crate::page::{Page, assert_shell};
+    use crate::page::{Page, assert_shell, read};
 
     use super::render;
 
@@ -91,15 +90,7 @@ mod tests {
         selected: &HistorySelection,
         chart: Option<&HistoryChart>,
     ) -> (StatusCode, String) {
-        let response = render(selected, &thermometers(rooms), chart);
-        let status = response.status();
-        let bytes = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("body reads");
-        (
-            status,
-            String::from_utf8(bytes.to_vec()).expect("utf-8 body"),
-        )
+        read(render(selected, &thermometers(rooms), chart)).await
     }
 
     async fn page(rooms: &[&str], selected: &HistorySelection, chart: &HistoryChart) -> String {

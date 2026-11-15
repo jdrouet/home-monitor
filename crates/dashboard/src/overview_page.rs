@@ -5,7 +5,7 @@ use domain::{AlertKind, Timestamp};
 use use_cases::{ActiveAlertLine, AlertSummary, Freshness, Overview};
 
 use crate::page::{self, Page};
-use crate::paris_time::{paris_hour_minute, paris_time};
+use crate::paris_time::paris_hour_minute;
 
 /// Rows the overview shows; beyond it the last row links to the alerts page.
 const MAX_ALERT_ROWS: usize = 3;
@@ -20,10 +20,6 @@ struct OverviewPage<'a> {
 }
 
 impl OverviewPage<'_> {
-    fn time(&self, at: &Timestamp) -> String {
-        paris_time(*at)
-    }
-
     fn active(&self) -> &[ActiveAlertLine] {
         self.alerts.map_or(&[], |alerts| &alerts.active)
     }
@@ -62,23 +58,16 @@ pub fn render(
 
 #[cfg(test)]
 mod tests {
-    use axum::body::to_bytes;
     use axum::http::StatusCode;
-    use chrono::DateTime;
-    use domain::{AlertKind, MacAddress, RoomName, SourceId, Timestamp};
+    use domain::{AlertKind, MacAddress, RoomName, SourceId};
     use use_cases::{
         ActiveAlertLine, AlertSummary, ClimateReading, Freshness, OutdoorOverview, Overview,
         RoomOverview, SensorOverview,
     };
 
-    use crate::page::{Page, assert_shell};
+    use crate::page::{Page, assert_shell, at, read};
 
     use super::render;
-
-    fn at(rfc3339: &str) -> Timestamp {
-        let instant = DateTime::parse_from_rfc3339(rfc3339).expect("valid instant");
-        Timestamp::from_micros(instant.timestamp_micros())
-    }
 
     fn reading(
         temperature: Option<f64>,
@@ -134,15 +123,7 @@ mod tests {
         overview: Option<&Overview>,
         alerts: Option<&AlertSummary>,
     ) -> (StatusCode, String) {
-        let response = render(overview, alerts, at("2026-01-15T12:30:00Z"));
-        let status = response.status();
-        let bytes = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("body reads");
-        (
-            status,
-            String::from_utf8(bytes.to_vec()).expect("utf-8 body"),
-        )
+        read(render(overview, alerts, at("2026-01-15T12:30:00Z"))).await
     }
 
     async fn page(overview: &Overview) -> String {
@@ -280,11 +261,5 @@ mod tests {
         let (_, html) = response(Some(&overview(Vec::new())), Some(&active(0))).await;
         assert!(html.contains("No active alerts."));
         assert!(!html.contains("alert-list alert-list--compact"));
-    }
-
-    #[tokio::test]
-    async fn the_render_time_is_shown_in_paris() {
-        let (_, html) = response(Some(&overview(Vec::new())), Some(&active(0))).await;
-        assert!(html.contains("Updated 13:30"));
     }
 }

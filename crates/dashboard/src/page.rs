@@ -56,6 +56,26 @@ pub fn respond<T: Template>(page: &T, status: StatusCode) -> Response {
     }
 }
 
+/// Reads a response into its status and UTF-8 body.
+#[cfg(test)]
+pub async fn read(response: Response) -> (StatusCode, String) {
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body reads");
+    (
+        status,
+        String::from_utf8(bytes.to_vec()).expect("utf-8 body"),
+    )
+}
+
+/// Parses an RFC 3339 instant.
+#[cfg(test)]
+pub fn at(rfc3339: &str) -> domain::Timestamp {
+    let instant = chrono::DateTime::parse_from_rfc3339(rfc3339).expect("valid instant");
+    domain::Timestamp::from_micros(instant.timestamp_micros())
+}
+
 /// Asserts the shell: one current link, the skip link, the nav, the title and no meta refresh.
 #[cfg(test)]
 pub fn assert_shell(html: &str, current: Page) {

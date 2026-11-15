@@ -26,7 +26,7 @@
 {% else %}
 <ul class="alert-list alert-list--compact">
 {% for line in self.shown_alerts() %}
-<li><span class="badge badge--alert">{% call macros::alert_kind(line.kind) %}{% endcall %}</span><strong class="alert-subject">{{ line.subject }}</strong>{% if let Some(celsius) = line.celsius %}<span class="alert-detail">{{ "{:.1}"|format(celsius) }} °C at last notification</span>{% endif %}<span class="alert-time">since {{ self.time(line.since) }}</span></li>
+{% call macros::active_alert(line) %}{% endcall %}
 {% endfor %}
 {% if self.more_alerts() > 0 %}
 <li class="alert-more"><a href="/alerts">{{ self.more_alerts() }} more active alerts</a></li>

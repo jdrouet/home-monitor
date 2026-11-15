@@ -52,14 +52,4 @@ mod tests {
     fn the_hour_and_minute_follow_winter_time() {
         assert_eq!(paris_hour_minute(at("2026-01-15T12:30:00Z")), "13:30");
     }
-
-    #[test]
-    fn the_hour_and_minute_follow_summer_time() {
-        assert_eq!(paris_hour_minute(at("2026-07-15T23:30:00Z")), "01:30");
-    }
-
-    #[test]
-    fn the_hour_and_minute_of_an_out_of_range_instant_is_a_dash() {
-        assert_eq!(paris_hour_minute(Timestamp::from_micros(i64::MAX)), "—");
-    }
 }

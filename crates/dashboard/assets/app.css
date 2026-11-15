@@ -118,18 +118,12 @@ main {
   gap: var(--space-2);
   margin-bottom: var(--space-4);
 }
-.page-header h1 { font-size: var(--text-lg); line-height: 1.2; font-weight: 600; }
-.page-header > :not(h1) {
-  color: var(--text-muted);
-  font-size: var(--text-sm);
-  font-variant-numeric: tabular-nums;
-}
+.page-header h1, .section-heading { font-size: var(--text-lg); line-height: 1.2; font-weight: 600; }
 
 .notice {
   padding: var(--space-3);
   border-radius: var(--radius-md);
   background: var(--sunken);
-  color: var(--text);
 }
 .notice--warn { background: var(--warn-bg); border: 1px solid var(--warn); }
 
@@ -154,18 +148,21 @@ main {
 
 /* Future cards (#36) join .card-grid after the Outside card; they need no new container. */
 main > section + section { margin-top: var(--space-5); }
-.section-heading { font-size: var(--text-lg); line-height: 1.2; font-weight: 600; }
 .unknown-sensors { margin-top: var(--space-6); }
 .unknown-sensors > .secondary { margin: var(--space-1) 0 var(--space-3); }
-.secondary { color: var(--text-muted); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
-.mono { font-family: var(--font-mono); }
-
-.alert-list {
+.page-header > :not(h1), .secondary, .alert-detail, .alert-time {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+.alert-list, .card, .table-wrap, .chart-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  overflow: hidden;
 }
+.mono { font-family: var(--font-mono); }
+
+.alert-list { overflow: hidden; }
 .alert-list li {
   display: flex;
   flex-wrap: wrap;
@@ -183,11 +180,6 @@ main > section + section { margin-top: var(--space-5); }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.alert-detail, .alert-time {
-  color: var(--text-muted);
-  font-size: var(--text-sm);
-  font-variant-numeric: tabular-nums;
 }
 .alert-time { margin-left: auto; white-space: nowrap; }
 .alert-list--compact .alert-detail { display: none; }
@@ -212,9 +204,6 @@ main > section + section { margin-top: var(--space-5); }
   gap: var(--space-1);
   align-content: start;
   padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
 }
 .card--wide { grid-column: 1 / -1; }
 .card h3 {
@@ -249,9 +238,6 @@ main > section + section { margin-top: var(--space-5); }
 .table-wrap {
   position: relative;
   overflow-x: auto;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
 }
 .table-wrap table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
 .table-wrap th, .table-wrap td {
@@ -334,9 +320,6 @@ main > section + section { margin-top: var(--space-5); }
 .chart-card {
   margin-top: var(--space-4);
   padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
 }
 .chart-card .section-heading { margin-bottom: var(--space-3); }
 .chart-card .u-legend { color: var(--text); font-size: var(--text-sm); }

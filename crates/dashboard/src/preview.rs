@@ -3,9 +3,8 @@
 use std::fs;
 use std::path::Path;
 
-use axum::body::to_bytes;
 use axum::response::Response;
-use chrono::{DateTime, Days, NaiveDate};
+use chrono::{Days, NaiveDate};
 use domain::{AlertKind, MacAddress, Metric, RoomName, SourceId, Thermometer, Timestamp};
 use use_cases::{
     ActiveAlertLine, AlertSummary, ClimateReading, Freshness, HealthRow, HistoryChart,
@@ -13,6 +12,7 @@ use use_cases::{
     SensorOverview,
 };
 
+use crate::page::{at, read};
 use crate::{alerts_page, health_page, history_page, overview_page};
 
 const ROOMS: [&str; 6] = [
@@ -23,11 +23,6 @@ const ROOMS: [&str; 6] = [
     "Bathroom",
     "Kids room",
 ];
-
-fn at(rfc3339: &str) -> Timestamp {
-    let instant = DateTime::parse_from_rfc3339(rfc3339).expect("valid instant");
-    Timestamp::from_micros(instant.timestamp_micros())
-}
 
 fn now() -> Timestamp {
     at("2026-01-15T12:42:00Z")
@@ -205,13 +200,6 @@ fn health_rows(with_figures: bool) -> Vec<HealthRow> {
         .collect()
 }
 
-async fn write(root: &Path, relative: &str, response: Response) {
-    let bytes = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body reads");
-    write_bytes(root, relative, &bytes);
-}
-
 fn write_bytes(root: &Path, relative: &str, contents: &[u8]) {
     let path = root.join(relative);
     fs::create_dir_all(path.parent().expect("path has a parent")).expect("directory is created");
@@ -227,103 +215,71 @@ async fn write_preview_pages() {
     let selected = selection();
     let full = overview(Freshness::Reporting);
     let day = now();
-
-    write(
-        root,
-        "index.html",
-        overview_page::render(Some(&full), Some(&alerts(3)), day),
-    )
-    .await;
-    write(
-        root,
-        "history/index.html",
-        history_page::render(&selected, &rooms, Some(&chart(true))),
-    )
-    .await;
-    write(
-        root,
-        "alerts/index.html",
-        alerts_page::render(Some(&alerts(3)), day),
-    )
-    .await;
-    let health = health_rows(true);
-    write(
-        root,
-        "health/index.html",
-        health_page::render(Some(&health)),
-    )
-    .await;
-
-    write(
-        root,
-        "states/overview-5-alerts.html",
-        overview_page::render(Some(&full), Some(&alerts(5)), day),
-    )
-    .await;
-    write(
-        root,
-        "states/overview-alerter-down.html",
-        overview_page::render(Some(&full), None, day),
-    )
-    .await;
-    write(
-        root,
-        "states/overview-store-down.html",
-        overview_page::render(None, Some(&alerts(3)), day),
-    )
-    .await;
-    write(
-        root,
-        "states/overview-both-down.html",
-        overview_page::render(None, None, day),
-    )
-    .await;
-    write(
-        root,
-        "states/overview-weather-down.html",
-        overview_page::render(
-            Some(&overview(Freshness::NotReporting)),
-            Some(&alerts(0)),
-            day,
-        ),
-    )
-    .await;
     let nothing = AlertSummary {
         active: Vec::new(),
         resolved: Vec::new(),
     };
-    write(
-        root,
-        "states/alerts-empty.html",
-        alerts_page::render(Some(&nothing), day),
-    )
-    .await;
-    write(
-        root,
-        "states/alerts-down.html",
-        alerts_page::render(None, day),
-    )
-    .await;
-    write(
-        root,
-        "states/history-empty.html",
-        history_page::render(&selected, &rooms, Some(&chart(false))),
-    )
-    .await;
-    write(
-        root,
-        "states/history-down.html",
-        history_page::render(&selected, &rooms, None),
-    )
-    .await;
+    let health = health_rows(true);
     let no_figures = health_rows(false);
-    write(
-        root,
-        "states/health-empty.html",
-        health_page::render(Some(&no_figures)),
-    )
-    .await;
-    write(root, "states/health-down.html", health_page::render(None)).await;
+    let weather_down = overview(Freshness::NotReporting);
+
+    let pages: [(&str, Response); 15] = [
+        (
+            "index.html",
+            overview_page::render(Some(&full), Some(&alerts(3)), day),
+        ),
+        (
+            "history/index.html",
+            history_page::render(&selected, &rooms, Some(&chart(true))),
+        ),
+        (
+            "alerts/index.html",
+            alerts_page::render(Some(&alerts(3)), day),
+        ),
+        ("health/index.html", health_page::render(Some(&health))),
+        (
+            "states/overview-5-alerts.html",
+            overview_page::render(Some(&full), Some(&alerts(5)), day),
+        ),
+        (
+            "states/overview-alerter-down.html",
+            overview_page::render(Some(&full), None, day),
+        ),
+        (
+            "states/overview-store-down.html",
+            overview_page::render(None, Some(&alerts(3)), day),
+        ),
+        (
+            "states/overview-both-down.html",
+            overview_page::render(None, None, day),
+        ),
+        (
+            "states/overview-weather-down.html",
+            overview_page::render(Some(&weather_down), Some(&alerts(0)), day),
+        ),
+        (
+            "states/alerts-empty.html",
+            alerts_page::render(Some(&nothing), day),
+        ),
+        ("states/alerts-down.html", alerts_page::render(None, day)),
+        (
+            "states/history-empty.html",
+            history_page::render(&selected, &rooms, Some(&chart(false))),
+        ),
+        (
+            "states/history-down.html",
+            history_page::render(&selected, &rooms, None),
+        ),
+        (
+            "states/health-empty.html",
+            health_page::render(Some(&no_figures)),
+        ),
+        ("states/health-down.html", health_page::render(None)),
+    ];
+    for (path, response) in pages {
+        let (_, html) = read(response).await;
+        write_bytes(root, path, html.as_bytes());
+    }
 
     write_bytes(
         root,

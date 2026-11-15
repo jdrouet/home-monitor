@@ -5,7 +5,7 @@ use domain::{AlertKind, Timestamp};
 use use_cases::AlertSummary;
 
 use crate::page::{self, Page};
-use crate::paris_time::{paris_hour_minute, paris_time};
+use crate::paris_time::paris_hour_minute;
 
 #[derive(Template)]
 #[template(path = "alerts.html")]
@@ -13,12 +13,6 @@ struct AlertsPage<'a> {
     summary: Option<&'a AlertSummary>,
     updated: String,
     page: Page,
-}
-
-impl AlertsPage<'_> {
-    fn time(&self, at: &Timestamp) -> String {
-        paris_time(*at)
-    }
 }
 
 /// `None` renders the page for an alerter that cannot be reached, with status 502.
@@ -34,13 +28,12 @@ pub fn render(summary: Option<&AlertSummary>, now: Timestamp) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use axum::body::to_bytes;
     use axum::http::StatusCode;
     use chrono::DateTime;
     use domain::{AlertKind, Timestamp};
     use use_cases::{ActiveAlertLine, AlertSummary, ResolvedAlertLine};
 
-    use crate::page::{Page, assert_shell};
+    use crate::page::{Page, assert_shell, read};
 
     use super::render;
 
@@ -50,15 +43,7 @@ mod tests {
     }
 
     async fn response(summary: Option<&AlertSummary>) -> (StatusCode, String) {
-        let response = render(summary, at("2026-01-15T12:30:00Z"));
-        let status = response.status();
-        let bytes = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("body reads");
-        (
-            status,
-            String::from_utf8(bytes.to_vec()).expect("utf-8 body"),
-        )
+        read(render(summary, at("2026-01-15T12:30:00Z"))).await
     }
 
     async fn page(summary: Option<&AlertSummary>) -> String {

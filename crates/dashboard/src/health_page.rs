@@ -56,12 +56,11 @@ pub fn render(rows: Option<&[HealthRow]>) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use axum::body::to_bytes;
     use axum::http::StatusCode;
     use chrono::NaiveDate;
     use use_cases::HealthRow;
 
-    use crate::page::{Page, assert_shell};
+    use crate::page::{Page, assert_shell, read};
 
     use super::render;
 
@@ -78,15 +77,7 @@ mod tests {
     }
 
     async fn response(rows: Option<&[HealthRow]>) -> (StatusCode, String) {
-        let response = render(rows);
-        let status = response.status();
-        let bytes = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("body reads");
-        (
-            status,
-            String::from_utf8(bytes.to_vec()).expect("utf-8 body"),
-        )
+        read(render(rows)).await
     }
 
     async fn page(rows: &[HealthRow]) -> String {
