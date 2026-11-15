@@ -25,6 +25,16 @@ pub enum GarminError {
     Status(StatusCode),
     #[error("Garmin sent a response that cannot be used")]
     Malformed,
+    #[error("Garmin is blocking sign-in (status {0}); wait before trying again")]
+    Blocked(StatusCode),
+    #[error("Garmin rejected the email or password")]
+    InvalidCredentials,
+    #[error("unexpected sign-in response: {0}")]
+    Unexpected(String),
+    #[error("Garmin accepted the sign-in but issued no tokens")]
+    Exchange,
+    #[error("cannot read the MFA code")]
+    Prompt(#[source] io::Error),
 }
 
 impl GarminError {

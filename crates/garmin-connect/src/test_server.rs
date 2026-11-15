@@ -8,6 +8,7 @@ use tokio::task::JoinHandle;
 /// One scripted answer.
 pub struct Reply {
     status: u16,
+    set_cookie: Option<&'static str>,
     body: String,
 }
 
@@ -15,8 +16,14 @@ impl Reply {
     pub fn new(status: u16, body: &str) -> Self {
         Self {
             status,
+            set_cookie: None,
             body: body.to_owned(),
         }
+    }
+
+    pub fn with_cookie(mut self, cookie: &'static str) -> Self {
+        self.set_cookie = Some(cookie);
+        self
     }
 
     pub fn status(status: u16) -> Self {
@@ -24,8 +31,12 @@ impl Reply {
     }
 
     fn to_bytes(&self) -> Vec<u8> {
+        let cookie = self
+            .set_cookie
+            .map(|cookie| format!("set-cookie: {cookie}\r\n"))
+            .unwrap_or_default();
         format!(
-            "HTTP/1.1 {} Scripted\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            "HTTP/1.1 {} Scripted\r\ncontent-type: application/json\r\n{cookie}content-length: {}\r\nconnection: close\r\n\r\n{}",
             self.status,
             self.body.len(),
             self.body
