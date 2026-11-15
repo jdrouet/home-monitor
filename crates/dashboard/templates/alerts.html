@@ -9,7 +9,7 @@
 <body>
 <h1>Alerts</h1>
 <p><a href="/">Overview</a> <a href="/history">History</a> <a href="/health">Health</a></p>
-{% macro kind(k) %}{% match k %}{% when AlertKind::Offline %}offline{% when AlertKind::TooHot %}too hot{% when AlertKind::TooCold %}too cold{% endmatch %}{% endmacro %}
+{% macro kind(k) %}{% match k %}{% when AlertKind::Offline %}offline{% when AlertKind::TooHot %}too hot{% when AlertKind::TooCold %}too cold{% when AlertKind::GarminLogin %}login expired{% endmatch %}{% endmacro %}
 {% if let Some(summary) = summary %}
 <section>
 <h2>Active</h2>

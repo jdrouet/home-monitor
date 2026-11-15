@@ -255,6 +255,7 @@ impl Alerts {
                 .filter(|resolved| now.duration_since(resolved.ended) <= HISTORY_KEPT)
                 .cloned()
                 .collect(),
+            garmin_login: None,
         }
     }
 
