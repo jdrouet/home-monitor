@@ -1,7 +1,7 @@
 # home-monitor
 
 Reads Bluetooth temperature and humidity sensors and shows the climate of each
-room on a dashboard, and sends a phone notification when a sensor stops
+room on a dashboard and charts past temperature and humidity per room, and sends a phone notification when a sensor stops
 reporting or a room gets too hot or too cold. It also shows the outdoor weather and today's forecast from
 Open-Meteo ([ADR-0018](docs/adr/0018-weather-collection.md)). It runs as seven
 containers: Mosquitto, ntfy, `ble-collector`, `store`, `dashboard`, `alerter`
