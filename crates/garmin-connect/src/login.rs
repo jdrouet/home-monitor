@@ -11,6 +11,7 @@ use crate::cookie_jar::CookieJar;
 use crate::endpoints::build_url;
 use crate::garmin_connect::blocking;
 use crate::native_headers::native_headers;
+use crate::read_json::read_json;
 use crate::sso_response::SsoOutcome;
 use crate::token_response::TokenResponse;
 use crate::{GarminConnect, GarminError, Tokens};
@@ -174,7 +175,7 @@ impl GarminConnect {
             let status = response.status();
             check_not_blocked(status)?;
             if status.is_success() {
-                let body: TokenResponse = response.json().await.map_err(GarminError::request)?;
+                let body: TokenResponse = read_json(response, "token exchange").await?;
                 return body.into_tokens(client_id.to_owned(), None);
             }
         }

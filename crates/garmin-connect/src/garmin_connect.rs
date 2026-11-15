@@ -12,6 +12,7 @@ use crate::daily_sleep::DailySleep;
 use crate::daily_summary::DailySummary;
 use crate::endpoints::build_url;
 use crate::native_headers::native_headers;
+use crate::read_json::read_json;
 use crate::social_profile::SocialProfile;
 use crate::token_response::TokenResponse;
 use crate::{Endpoints, GarminError, GarminSession, TokenFile, Tokens};
@@ -86,13 +87,18 @@ impl GarminConnect {
         if !status.is_success() {
             return Err(GarminError::Refresh(status));
         }
-        let body: TokenResponse = response.json().await.map_err(GarminError::request)?;
+        let body: TokenResponse = read_json(response, "token refresh").await?;
         body.into_tokens(stored.di_client_id.clone(), Some(&stored.di_refresh_token))
     }
 
     /// GETs `url` as the signed-in user. A 401 or 403 means the session is
     /// refused.
-    async fn fetch<T: DeserializeOwned>(&self, token: &str, url: Url) -> Result<T, GarminError> {
+    async fn fetch<T: DeserializeOwned>(
+        &self,
+        token: &str,
+        url: Url,
+        endpoint: &'static str,
+    ) -> Result<T, GarminError> {
         let response = self
             .http
             .get(url)
@@ -107,7 +113,7 @@ impl GarminConnect {
                 Err(GarminError::SessionRejected(status))
             }
             status if !status.is_success() => Err(GarminError::Status(status)),
-            _ => response.json().await.map_err(GarminError::request),
+            _ => read_json(response, endpoint).await,
         }
     }
 
@@ -117,7 +123,7 @@ impl GarminConnect {
             &["userprofile-service", "socialProfile"],
             &[],
         );
-        let profile: SocialProfile = self.fetch(&tokens.di_token, url).await?;
+        let profile: SocialProfile = self.fetch(&tokens.di_token, url, "social profile").await?;
         profile.display_name()
     }
 }
@@ -163,9 +169,9 @@ impl HealthProvider for GarminConnect {
             &[("date", &day), ("nonSleepBufferMinutes", "60")],
         );
         self.pause().await;
-        let summary: DailySummary = self.fetch(token, summary_url).await?;
+        let summary: DailySummary = self.fetch(token, summary_url, "daily summary").await?;
         self.pause().await;
-        let sleep: DailySleep = self.fetch(token, sleep_url).await?;
+        let sleep: DailySleep = self.fetch(token, sleep_url, "daily sleep").await?;
         Ok(DailyHealth {
             sleep_seconds: sleep.seconds(),
             sleep_score: sleep.score(),
@@ -370,7 +376,7 @@ mod tests {
         let status = connect.daily(&session, date()).await.expect_err("500");
         assert!(matches!(status, GarminError::Status(_)));
         let garbage = connect.daily(&session, date()).await.expect_err("garbage");
-        assert!(matches!(garbage, GarminError::Request(_)));
+        assert!(matches!(garbage, GarminError::InvalidResponse { .. }));
         assert!(!GarminConnect::is_session_error(&status));
         assert!(!GarminConnect::is_session_error(&garbage));
     }

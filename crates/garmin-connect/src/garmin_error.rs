@@ -25,6 +25,8 @@ pub enum GarminError {
     Status(StatusCode),
     #[error("Garmin sent a response that cannot be used")]
     Malformed,
+    #[error("Garmin sent an undecodable {endpoint} response")]
+    InvalidResponse { endpoint: &'static str },
     #[error("Garmin is blocking sign-in (status {0}); wait before trying again")]
     Blocked(StatusCode),
     #[error("Garmin rejected the email or password")]
