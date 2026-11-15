@@ -10,7 +10,7 @@ use anyhow::{Context, anyhow};
 use axum::{Router, routing::get};
 use command::Command;
 use config::{HealthCollectorConfig, MqttConfig};
-use domain::{SourceId, Timestamp};
+use domain::{GARMIN, SourceId, Timestamp};
 use garmin_connect::{GarminConnect, TokenFile};
 use mqtt::MqttPublisher;
 use paris_clock::paris_date;
@@ -21,10 +21,10 @@ use tokio::net::TcpListener;
 use tokio::time::sleep;
 use use_cases::{
     BackfillStore, HealthBackfill, HealthProvider, HealthPull, Publisher, collect_health,
+    report_session,
 };
 
 const CLIENT_ID: &str = "health-collector";
-const SOURCE_ID: &str = "garmin";
 const USAGE: &str = "usage: health-collector [login]";
 
 #[tokio::main(flavor = "current_thread")]
@@ -80,7 +80,7 @@ async fn collect(mqtt: &MqttConfig, health: &HealthCollectorConfig) -> anyhow::R
     let publisher = MqttPublisher::connect(&mqtt.host, mqtt.port, CLIENT_ID);
     let backfill_store =
         BackfillFile::new(health.token_file.with_file_name("garmin_backfill.json"));
-    let source_id = SourceId::from(SOURCE_ID.to_owned());
+    let source_id = SourceId::from(GARMIN.to_owned());
     tokio::select! {
         served = axum::serve(listener, router) => Err(anyhow!("health server ended: {served:?}")),
         never = pull_forever(&provider, &publisher, &backfill_store, &source_id) => match never {},
@@ -89,7 +89,7 @@ async fn collect(mqtt: &MqttConfig, health: &HealthCollectorConfig) -> anyhow::R
 
 /// Pulls at startup, then at every daily pull time. The next deadline is
 /// fixed before a pull starts, so a slow pull cannot skip it. A failed pull
-/// is not retried before the next one. After a completed pull the backfill
+/// is not retried before the next one. Each pull reports the session status. After a completed pull the backfill
 /// runs until shortly before the next deadline.
 async fn pull_forever<H: HealthProvider, P: Publisher, S: BackfillStore>(
     provider: &H,
@@ -101,6 +101,7 @@ async fn pull_forever<H: HealthProvider, P: Publisher, S: BackfillStore>(
         let started = Timestamp::now();
         let next = next_pull(started);
         let pull = collect_health(provider, publisher, source_id, &pull_days(started)).await;
+        report_session(publisher, source_id, &pull, started).await;
         if matches!(pull, HealthPull::Completed { .. }) {
             HealthBackfill {
                 provider,

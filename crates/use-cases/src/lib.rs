@@ -22,6 +22,7 @@ mod notifier;
 mod offline_notification;
 mod overview;
 mod publisher;
+mod report_session;
 mod temperature_notification;
 mod weather_provider;
 mod weather_report;
@@ -54,5 +55,6 @@ pub use overview::{
     build_overview,
 };
 pub use publisher::Publisher;
+pub use report_session::report_session;
 pub use weather_provider::WeatherProvider;
 pub use weather_report::WeatherReport;
