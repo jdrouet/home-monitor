@@ -254,31 +254,9 @@ newest first, with the caption "Daily health, last 30 days".
 | No data on any day | A neutral notice in place of the table: "**No health data in the last 30 days.** Check that the health collector is running." |
 | Store unavailable | A warning notice: "**Health data unavailable.** The store did not respond. This page retries every 5 minutes." Status 502. |
 
-## CSS delivery and templates (recommendation for the architect)
+## CSS delivery and templates
 
-- Put the CSS in one file, `crates/dashboard/assets/app.css`, embedded at
-  compile time and inlined in a `<style>` element by a shared base template.
-  Do not serve it from a separate versioned route.
-- Use askama inheritance. A `base.html` holds the doctype, viewport and
-  `color-scheme` meta, the `<style>`, the skip link, the nav with
-  `aria-current`, and blocks for the title, extra head content (uPlot assets
-  and refresh meta), and the main content. The four pages extend it.
-
-Rationale: the stylesheet is small (an estimated 5 to 7 KB before
-compression), the dashboard serves a LAN, and the pages already re-download
-on every 60 s refresh, so a separate cached file saves almost nothing. An
-immutable versioned path, as used for uPlot, works for a vendored file whose
-version changes with its content. For our own CSS, which changes often, a
-hand-bumped version is a stale-style risk for a year of `immutable` caching.
-Avoiding that risk needs a content hash, plus a route, a test, and the path
-threaded into every template. Inlining removes all of that and saves the
-second request on first paint. The CSS still lives in its own `.css` file,
-so editing it stays normal. Move to an external file with a content-hashed
-path if the CSS grows past about 20 KB or a Content-Security-Policy without
-`unsafe-inline` is introduced; the History page's inline chart script would
-need the same change then. A base template is needed whichever delivery is
-chosen: four copies of the shell and nav are how the current pages drifted
-(each lists only the other three links, in different orders).
+One `app.css`, inlined by a shared `base.html`; see ADR-0026.
 
 ## Acceptance checks for review
 

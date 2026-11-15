@@ -123,27 +123,7 @@ at or above it is the desktop layout. Custom properties cannot be used in media
 queries, so write `@media (min-width: 48rem)` literally. Tablets use the
 desktop layout. Grids are fluid on both sides of the breakpoint.
 
-```css
-:root {
-  color-scheme: light dark;
-  --bg: #f5f6f4; --surface: #ffffff; --sunken: #eceeeb;
-  --text: #1a1d1b; --text-muted: #565d59;
-  --border: #d5d9d5; --control: #767d78;
-  --accent: #0b6b5d; --on-accent: #ffffff; --accent-bg: #e1f0ec;
-  --alert: #a5231b; --alert-bg: #fbe8e5;
-  --warn: #7a4f00; --warn-bg: #fbf0d6;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #111413; --surface: #1a1e1c; --sunken: #232826;
-    --text: #e6e9e7; --text-muted: #a2aaa5;
-    --border: #323936; --control: #78817c;
-    --accent: #5fc9b3; --on-accent: #0b1f1b; --accent-bg: #173430;
-    --alert: #ff9e92; --alert-bg: #3d1915;
-    --warn: #f0c063; --warn-bg: #352a10;
-  }
-}
-```
+The token values live in `crates/dashboard/assets/app.css`.
 
 ## Components
 
