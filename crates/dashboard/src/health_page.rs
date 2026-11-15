@@ -1,8 +1,9 @@
 use askama::Template;
 use axum::http::StatusCode;
-use axum::response::{Html, IntoResponse, Response};
-use tracing::error;
+use axum::response::Response;
 use use_cases::HealthRow;
+
+use crate::page::{self, Page};
 
 const MISSING: &str = "—";
 
@@ -10,6 +11,7 @@ const MISSING: &str = "—";
 #[template(path = "health.html")]
 struct HealthPage<'a> {
     rows: &'a [HealthRow],
+    page: Page,
 }
 
 impl HealthPage<'_> {
@@ -30,13 +32,11 @@ impl HealthPage<'_> {
 }
 
 pub fn render(rows: &[HealthRow]) -> Response {
-    match (HealthPage { rows }).render() {
-        Ok(html) => Html(html).into_response(),
-        Err(error) => {
-            error!(%error, "cannot render health page");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
+    let page = HealthPage {
+        rows,
+        page: Page::Health,
+    };
+    page::respond(&page, StatusCode::OK)
 }
 
 #[cfg(test)]
@@ -44,6 +44,8 @@ mod tests {
     use axum::body::to_bytes;
     use chrono::NaiveDate;
     use use_cases::HealthRow;
+
+    use crate::page::{Page, assert_shell};
 
     use super::render;
 
@@ -106,9 +108,8 @@ mod tests {
     #[tokio::test]
     async fn the_page_links_to_the_other_pages() {
         let html = page(&[]).await;
-        assert!(html.contains(r#"<a href="/">Overview</a>"#));
-        assert!(html.contains(r#"<a href="/history">History</a>"#));
-        assert!(html.contains(r#"<a href="/alerts">Alerts</a>"#));
+        assert_shell(&html, Page::Health);
         assert!(html.contains("Body Battery max"));
+        assert!(html.contains("}, 300 * 1000);"));
     }
 }

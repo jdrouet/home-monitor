@@ -5,6 +5,7 @@ mod health_page;
 mod history_page;
 mod history_params;
 mod overview_page;
+mod page;
 mod paris_time;
 mod store_client;
 mod uplot_assets;

@@ -1,16 +1,17 @@
 use askama::Template;
 use axum::http::StatusCode;
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::Response;
 use domain::{AlertKind, Timestamp};
-use tracing::error;
 use use_cases::AlertSummary;
 
+use crate::page::{self, Page};
 use crate::paris_time::paris_time;
 
 #[derive(Template)]
 #[template(path = "alerts.html")]
 struct AlertsPage<'a> {
     summary: Option<&'a AlertSummary>,
+    page: Page,
 }
 
 impl AlertsPage<'_> {
@@ -21,13 +22,11 @@ impl AlertsPage<'_> {
 
 /// `None` renders the page for an alerter that cannot be reached.
 pub fn render(summary: Option<&AlertSummary>) -> Response {
-    match (AlertsPage { summary }).render() {
-        Ok(html) => Html(html).into_response(),
-        Err(error) => {
-            error!(%error, "cannot render alerts page");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
+    let page = AlertsPage {
+        summary,
+        page: Page::Alerts,
+    };
+    page::respond(&page, StatusCode::OK)
 }
 
 #[cfg(test)]
@@ -36,6 +35,8 @@ mod tests {
     use chrono::DateTime;
     use domain::{AlertKind, Timestamp};
     use use_cases::{ActiveAlertLine, AlertSummary, ResolvedAlertLine};
+
+    use crate::page::{Page, assert_shell};
 
     use super::render;
 
@@ -134,9 +135,7 @@ mod tests {
     async fn without_a_summary_the_page_says_alerts_are_unavailable() {
         let html = page(None).await;
         assert!(html.contains("Alerts unavailable"));
-        assert!(html.contains(r#"href="/""#));
-        assert!(html.contains(r#"href="/history""#));
-        assert!(html.contains(r#"<a href="/health">Health</a>"#));
+        assert_shell(&html, Page::Alerts);
         assert!(!html.contains("No active alerts."));
     }
 
@@ -150,7 +149,7 @@ mod tests {
             since: at("2026-01-15T10:00:00Z"),
         });
         let html = page(Some(&summary)).await;
-        assert!(!html.contains("<script>"));
+        assert!(!html.contains("<script>alert(1)"));
         assert!(html.contains("&#60;script&#62;"));
     }
 }

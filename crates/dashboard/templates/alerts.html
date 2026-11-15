@@ -1,15 +1,6 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="60">
-<title>Alerts</title>
-</head>
-<body>
-<h1>Alerts</h1>
-<p><a href="/">Overview</a> <a href="/history">History</a> <a href="/health">Health</a></p>
+{% extends "base.html" %}
 {% macro kind(k) %}{% match k %}{% when AlertKind::Offline %}offline{% when AlertKind::TooHot %}too hot{% when AlertKind::TooCold %}too cold{% when AlertKind::GarminLogin %}login expired{% endmatch %}{% endmacro %}
+{% block content %}
 {% if let Some(summary) = summary %}
 <section>
 <h2>Active</h2>
@@ -30,5 +21,4 @@
 {% else %}
 <p>Alerts unavailable</p>
 {% endif %}
-</body>
-</html>
+{% endblock %}

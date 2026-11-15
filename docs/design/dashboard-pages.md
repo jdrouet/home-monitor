@@ -21,8 +21,10 @@ overview, and gives each failure a rendered state instead of a bare
   warning notice in the data region. The HTTP status stays 502, as today. A
   page that auto-refreshes keeps its refresh, so it recovers without the
   owner's action.
-- Auto refresh is unchanged: Overview 60 s, Alerts 60 s, Health 300 s,
-  History none. It stays a `<meta http-equiv="refresh">`, without JS.
+- Auto refresh periods are unchanged: Overview 60 s, Alerts 60 s, Health
+  300 s, History none. An inline script reloads the page only while it is
+  visible and nothing has focus (ADR-0026). No page uses a
+  `<meta http-equiv="refresh">`.
 
 ## Overview `/`
 

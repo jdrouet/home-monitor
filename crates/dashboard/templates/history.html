@@ -1,15 +1,9 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Room climate history</title>
+{% extends "base.html" %}
+{% block head %}
 <link rel="stylesheet" href="/assets/uplot-1.6.32.min.css">
 <script src="/assets/uplot-1.6.32.min.js"></script>
-</head>
-<body>
-<h1>Room climate history</h1>
-<p><a href="/">Overview</a> <a href="/alerts">Alerts</a> <a href="/health">Health</a></p>
+{% endblock %}
+{% block content %}
 <form method="get" action="/history">
 <label>Metric
 <select name="metric">
@@ -45,5 +39,4 @@ new uPlot({
   series: [{}].concat(labels.map((label, i) => ({ label: label, stroke: palette[i % palette.length], width: 2 }))),
 }, [timestamps].concat(lines), element);
 </script>
-</body>
-</html>
+{% endblock %}

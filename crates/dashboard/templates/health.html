@@ -1,14 +1,5 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="300">
-<title>Health</title>
-</head>
-<body>
-<h1>Health</h1>
-<p><a href="/">Overview</a> <a href="/history">History</a> <a href="/alerts">Alerts</a></p>
+{% extends "base.html" %}
+{% block content %}
 <table>
 <thead>
 <tr><th>Date</th><th>Sleep</th><th>Sleep score</th><th>Resting HR (bpm)</th><th>Steps</th><th>Body Battery max</th><th>Body Battery min</th></tr>
@@ -19,5 +10,4 @@
 {% endfor %}
 </tbody>
 </table>
-</body>
-</html>
+{% endblock %}

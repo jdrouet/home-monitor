@@ -1,19 +1,10 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="60">
-<title>Room climate</title>
-</head>
-<body>
-<h1>Room climate</h1>
-<p><a href="/history">History</a> <a href="/alerts">Alerts</a> <a href="/health">Health</a></p>
+{% extends "base.html" %}
 {% macro reading(r) %}
 <p>{% if let Some(t) = r.temperature %}{{ "{:.1}"|format(t) }} °C{% else %}—{% endif %}</p>
 <p>{% if let Some(h) = r.humidity %}{{ "{:.1}"|format(h) }} %{% else %}—{% endif %}</p>
 {% if r.freshness == Freshness::NotReporting %}<p>not reporting</p>{% endif %}
 {% endmacro %}
+{% block content %}
 <section>
 <h2>Outside</h2>
 {% if overview.outdoor.reading.freshness == Freshness::Reporting %}
@@ -38,5 +29,4 @@
 {% endfor %}
 </section>
 {% endif %}
-</body>
-</html>
+{% endblock %}

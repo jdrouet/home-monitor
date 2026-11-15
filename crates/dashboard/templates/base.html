@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{ page.label() }} · Home monitor</title>
+<style>{{ crate::page::APP_CSS|safe }}</style>
+{% if let Some(secs) = page.refresh_secs() %}
+<script>
+setInterval(function () {
+  var active = document.activeElement;
+  if (document.visibilityState === "visible" && (active === null || active === document.body)) {
+    location.reload();
+  }
+}, {{ secs }} * 1000);
+</script>
+{% endif %}
+{% block head %}{% endblock %}
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="app-header"><nav aria-label="Main">
+<span class="brand">Home monitor</span>
+<ul>
+{% for p in crate::page::Page::ALL %}
+<li><a href="{{ p.href() }}"{% if p == page %} aria-current="page"{% endif %}>{{ p.label() }}</a></li>
+{% endfor %}
+</ul>
+</nav></header>
+<main id="main">
+<div class="page-header"><h1>{{ page.label() }}</h1>{% block meta %}{% endblock %}</div>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

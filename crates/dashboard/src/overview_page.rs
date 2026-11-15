@@ -1,23 +1,23 @@
 use askama::Template;
 use axum::http::StatusCode;
-use axum::response::{Html, IntoResponse, Response};
-use tracing::error;
+use axum::response::Response;
 use use_cases::{Freshness, Overview};
+
+use crate::page::{self, Page};
 
 #[derive(Template)]
 #[template(path = "overview.html")]
 struct OverviewPage<'a> {
     overview: &'a Overview,
+    page: Page,
 }
 
 pub fn render(overview: &Overview) -> Response {
-    match (OverviewPage { overview }).render() {
-        Ok(html) => Html(html).into_response(),
-        Err(error) => {
-            error!(%error, "cannot render overview page");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
+    let page = OverviewPage {
+        overview,
+        page: Page::Overview,
+    };
+    page::respond(&page, StatusCode::OK)
 }
 
 #[cfg(test)]
@@ -27,6 +27,8 @@ mod tests {
     use use_cases::{
         ClimateReading, Freshness, OutdoorOverview, Overview, RoomOverview, SensorOverview,
     };
+
+    use crate::page::{Page, assert_shell};
 
     use super::render;
 
@@ -138,15 +140,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn page_links_to_the_history() {
+    async fn the_page_has_the_shell_with_overview_current() {
         let overview = Overview {
             outdoor: outdoor(Freshness::Reporting),
             rooms: Vec::new(),
             unknown_sensors: Vec::new(),
         };
         let html = page(&overview).await;
-        assert!(html.contains(r#"href="/history""#));
-        assert!(html.contains(r#"<a href="/alerts">Alerts</a>"#));
-        assert!(html.contains(r#"<a href="/health">Health</a>"#));
+        assert_shell(&html, Page::Overview);
+        assert!(html.contains("setInterval"));
+        assert!(html.contains("}, 60 * 1000);"));
     }
 }

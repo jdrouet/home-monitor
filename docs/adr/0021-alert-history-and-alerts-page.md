@@ -1,6 +1,7 @@
 # ADR-0021: Alert history and the alerts page
 
-Status: accepted (alert kinds and state amended by ADR-0024)
+Status: accepted (alert kinds and state amended by ADR-0024; the overview reads
+alerts since ADR-0026)
 
 ## Context
 Issue #11 needs a dashboard page with active alerts (what, since when) and

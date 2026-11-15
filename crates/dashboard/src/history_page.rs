@@ -1,9 +1,10 @@
 use askama::Template;
 use axum::http::StatusCode;
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::Response;
 use domain::{Metric, Thermometer};
-use tracing::error;
 use use_cases::{HISTORY_METRICS, HistoryChart, HistorySelection, Period};
+
+use crate::page::{self, Page};
 
 #[derive(Template)]
 #[template(path = "history.html")]
@@ -13,6 +14,7 @@ struct HistoryPage<'a> {
     chart: &'a HistoryChart,
     metrics: [Metric; 2],
     periods: [Period; 4],
+    page: Page,
 }
 
 pub fn render(
@@ -26,14 +28,9 @@ pub fn render(
         chart,
         metrics: HISTORY_METRICS,
         periods: Period::ALL,
+        page: Page::History,
     };
-    match page.render() {
-        Ok(html) => Html(html).into_response(),
-        Err(error) => {
-            error!(%error, "cannot render history page");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
+    page::respond(&page, StatusCode::OK)
 }
 
 #[cfg(test)]
@@ -41,6 +38,8 @@ mod tests {
     use axum::body::to_bytes;
     use domain::{MacAddress, Metric, RoomName, Thermometer};
     use use_cases::{HistoryChart, HistorySelection, Period};
+
+    use crate::page::{Page, assert_shell};
 
     use super::render;
 
@@ -112,9 +111,8 @@ mod tests {
         let html = page(&[], &selected, &chart(&[])).await;
         assert!(html.contains(r#"href="/assets/uplot-1.6.32.min.css""#));
         assert!(html.contains(r#"src="/assets/uplot-1.6.32.min.js""#));
-        assert!(html.contains(r#"href="/""#));
-        assert!(html.contains(r#"<a href="/alerts">Alerts</a>"#));
-        assert!(html.contains(r#"<a href="/health">Health</a>"#));
+        assert_shell(&html, Page::History);
+        assert!(!html.contains("location.reload"));
         assert!(html.contains(r#"<div id="chart">"#));
         assert!(html.contains("const timestamps = [0,900];"));
         assert!(html.contains("const lines = [];"));
