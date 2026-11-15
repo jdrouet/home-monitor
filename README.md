@@ -138,7 +138,9 @@ update in stages:
    ([ADR-0023](docs/adr/0023-health-backfill.md)). Progress is in
    `garmin_backfill.json` on the token volume. Deleting that file restarts
    the import; days already stored are not duplicated. A corrupt file is
-   logged and the import is skipped until you remove it.
+   logged and the import is skipped until you remove it. Each imported day
+   logs one INFO line: stored, with the number of values, or empty when
+   Garmin has no figures for it (for example before you owned the watch).
 7. After the import the collector keeps Garmin's original data in the
    `garmin-archive` volume (`/archive/garmin` in the container): every
    workout with its original file, and the documents of each completed day of

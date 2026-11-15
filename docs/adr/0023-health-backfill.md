@@ -1,6 +1,6 @@
 # ADR-0023: Garmin health backfill
 
-Status: accepted (runner shared with the gap fill by ADR-0024; window checks within a step amended by ADR-0025)
+Status: accepted (runner shared with the gap fill by ADR-0024; window checks within a step amended by ADR-0025; per-day log amended for #39)
 
 ## Context
 Issue #15. ADR-0008 promised a one-time, rate-limited backfill of one year of
@@ -30,6 +30,9 @@ Garmin data. ADR-0022 deferred later syncs and failed days to it.
   failure, a cursor save failure. The import resumes after the next completed
   pull: at most one attempt per scheduled pull, and it never logs in. Any
   other day error is logged and the day is skipped.
+- Log: each day the run passes logs one INFO line, either stored (with the
+  metric count) or empty (Garmin returned no figures). A skipped day logs its
+  WARN and a stopped day logs no INFO line. Dates and counts only.
 - Cursor: `garmin_backfill.json` next to the token file, as
   `{"version":1,"next":"YYYY-MM-DD","last":"YYYY-MM-DD"}`, written atomically
   as in ADR-0019. The import is done when `next > last` and then never
