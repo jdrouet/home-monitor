@@ -1,6 +1,6 @@
 # ADR-0022: Garmin health collection
 
-Status: accepted
+Status: accepted (backfill consequence amended by ADR-0023)
 
 ## Context
 Issue #12 needs daily sleep, resting heart rate, steps and Body Battery from
@@ -56,8 +56,9 @@ day's first, partial value would be kept and its final value dropped.
   clients; logins or pulls can stop working without notice.
 - The login can be blocked by Cloudflare client fingerprinting; tokens can
   then be produced elsewhere and copied into the volume.
-- Yesterday keeps the value Garmin had at 10:00; later syncs, or a day whose
-  10:00 pull failed, wait for the backfill (#15).
+- Yesterday keeps the value Garmin had at 10:00. The backfill (ADR-0023)
+  covers only days before the first run, so later syncs and days whose 10:00
+  pull failed are not repaired.
 - A re-login is needed when the refresh token expires or is revoked; its
   lifetime is not documented.
 - Older images reject the section and cannot decode health batches: update

@@ -1,12 +1,13 @@
-use std::fs::{self, File};
-use std::io::{self, ErrorKind, Write};
-use std::path::{Path, PathBuf};
+use std::io;
+use std::path::PathBuf;
 
 use domain::AlertState;
 use serde::{Deserialize, Serialize};
 use use_cases::AlertStateStore;
 
 use crate::StateFileError;
+use crate::read_if_present::read_if_present;
+use crate::write_atomic::write_atomic;
 
 const VERSION: u32 = 1;
 
@@ -32,38 +33,20 @@ impl StateFile {
             version: VERSION,
             state: state.clone(),
         };
-        let mut temp = self.path.as_os_str().to_owned();
-        temp.push(".tmp");
-        let mut file = File::create(&temp)?;
-        file.write_all(&serde_json::to_vec(&wire)?)?;
-        file.sync_all()?;
-        fs::rename(&temp, &self.path)?;
-        File::open(parent_dir(&self.path))?.sync_all()
+        write_atomic(&self.path, &serde_json::to_vec(&wire)?)
     }
-}
-
-/// The directory holding `path`; `.` for a bare file name.
-fn parent_dir(path: &Path) -> &Path {
-    path.parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."))
 }
 
 impl AlertStateStore for StateFile {
     type Error = StateFileError;
 
     fn load(&self) -> Result<AlertState, Self::Error> {
-        let bytes = match fs::read(&self.path) {
-            Ok(bytes) => bytes,
-            Err(source) if source.kind() == ErrorKind::NotFound => {
-                return Ok(AlertState::default());
-            }
-            Err(source) => {
-                return Err(StateFileError::Read {
-                    path: self.path.clone(),
-                    source,
-                });
-            }
+        let bytes = read_if_present(&self.path).map_err(|source| StateFileError::Read {
+            path: self.path.clone(),
+            source,
+        })?;
+        let Some(bytes) = bytes else {
+            return Ok(AlertState::default());
         };
         let wire: Wire =
             serde_json::from_slice(&bytes).map_err(|source| StateFileError::Parse {
@@ -220,15 +203,6 @@ mod tests {
         assert_eq!(
             fs::read(dir.path().join("alerts.json")).expect("read"),
             before
-        );
-    }
-
-    #[test]
-    fn a_bare_file_name_is_synced_through_the_current_directory() {
-        assert_eq!(super::parent_dir(Path::new("alerts.json")), Path::new("."));
-        assert_eq!(
-            super::parent_dir(Path::new("/data/alerts.json")),
-            Path::new("/data")
         );
     }
 }

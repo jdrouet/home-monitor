@@ -20,4 +20,7 @@ pub trait HealthProvider {
     /// Whether `error` means the session itself was refused, as opposed to a
     /// failure confined to one day.
     fn is_session_error(error: &Self::Error) -> bool;
+
+    /// Whether `error` means Garmin asks the client to slow down.
+    fn is_throttled(error: &Self::Error) -> bool;
 }

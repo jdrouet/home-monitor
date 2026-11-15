@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use chrono::{NaiveTime, TimeDelta};
+use chrono::{NaiveDate, NaiveTime, TimeDelta};
 use domain::Timestamp;
 use paris_clock::{paris_at, paris_date};
 use use_cases::HealthDay;
@@ -8,16 +8,22 @@ use use_cases::HealthDay;
 /// When the daily pull runs, on the Europe/Paris clock.
 const PULL_AT: NaiveTime = NaiveTime::from_hms_opt(10, 0, 0).expect("10:00 is a valid time");
 
+/// The stamp of a completed Europe/Paris day: its last microsecond.
+pub fn completed_day_stamp(date: NaiveDate) -> Timestamp {
+    let next_midnight = paris_at(date + TimeDelta::days(1), NaiveTime::MIN);
+    Timestamp::from_micros(next_midnight.as_micros() - 1)
+}
+
 /// The days to pull at `now`: today always, stamped `now`; yesterday only from
 /// the daily pull time on, stamped at its last microsecond.
 pub fn pull_days(now: Timestamp) -> Vec<HealthDay> {
     let today = paris_date(now);
-    let midnight = paris_at(today, NaiveTime::MIN);
     let mut days = Vec::with_capacity(2);
     if now >= paris_at(today, PULL_AT) {
+        let yesterday = today.pred_opt().expect("date is within chrono's range");
         days.push(HealthDay {
-            date: today.pred_opt().expect("date is within chrono's range"),
-            stamp: Timestamp::from_micros(midnight.as_micros() - 1),
+            date: yesterday,
+            stamp: completed_day_stamp(yesterday),
         });
     }
     days.push(HealthDay {
@@ -50,7 +56,7 @@ mod tests {
     use chrono::{DateTime, NaiveDate};
     use domain::Timestamp;
 
-    use super::{next_pull, pull_days, wait_until};
+    use super::{completed_day_stamp, next_pull, pull_days, wait_until};
 
     fn at(rfc3339: &str) -> Timestamp {
         let instant = DateTime::parse_from_rfc3339(rfc3339).expect("valid instant");
@@ -59,6 +65,30 @@ mod tests {
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(year, month, day).expect("valid date")
+    }
+
+    #[test]
+    fn a_completed_day_is_stamped_at_its_last_microsecond() {
+        assert_eq!(
+            completed_day_stamp(date(2026, 1, 14)).as_micros(),
+            at("2026-01-14T23:00:00Z").as_micros() - 1
+        );
+        assert_eq!(
+            completed_day_stamp(date(2026, 7, 14)).as_micros(),
+            at("2026-07-14T22:00:00Z").as_micros() - 1
+        );
+    }
+
+    #[test]
+    fn dst_days_are_stamped_at_their_own_last_microsecond() {
+        assert_eq!(
+            completed_day_stamp(date(2026, 3, 29)).as_micros(),
+            at("2026-03-29T22:00:00Z").as_micros() - 1
+        );
+        assert_eq!(
+            completed_day_stamp(date(2026, 10, 25)).as_micros(),
+            at("2026-10-25T23:00:00Z").as_micros() - 1
+        );
     }
 
     #[test]

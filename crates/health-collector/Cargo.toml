@@ -14,6 +14,7 @@ garmin-connect.workspace = true
 mqtt.workspace = true
 paris-clock.workspace = true
 rpassword = "7"
+state-file.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt", "time"] }
 tracing-subscriber.workspace = true
 use-cases.workspace = true
