@@ -40,7 +40,7 @@ pub use offline_watch::{OFFLINE_AFTER, OfflineWatch, REMIND_EVERY};
 pub use resolved_alert::ResolvedAlert;
 pub use room_name::RoomName;
 pub use series_query::SeriesQuery;
-pub use source_id::SourceId;
+pub use source_id::{GARMIN, SourceId};
 pub use source_kind::SourceKind;
 pub use temperature_alert::TemperatureAlert;
 pub use temperature_event::TemperatureEvent;
