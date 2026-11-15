@@ -16,6 +16,7 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 chrono-tz = { version = "0.10", default-features = false }
 config = { path = "crates/config" }
 domain = { path = "crates/domain" }
+garmin-connect = { path = "crates/garmin-connect" }
 mqtt = { path = "crates/mqtt" }
 ntfy = { path = "crates/ntfy" }
 open-meteo = { path = "crates/open-meteo" }
