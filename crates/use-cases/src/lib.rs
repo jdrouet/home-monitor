@@ -7,6 +7,8 @@ mod advertisement_source;
 mod alert_state_store;
 mod alert_summary;
 mod alerts;
+mod archive_days;
+mod archive_documents;
 mod archive_key;
 mod archive_source;
 mod backfill_cursor;
@@ -36,6 +38,8 @@ mod publisher;
 mod raw_archive;
 mod report_session;
 mod temperature_notification;
+#[cfg(test)]
+mod test_archive;
 mod weather_provider;
 mod weather_report;
 
@@ -48,6 +52,7 @@ pub use advertisement_source::AdvertisementSource;
 pub use alert_state_store::AlertStateStore;
 pub use alert_summary::{ActiveAlertLine, AlertSummary, ResolvedAlertLine, build_alert_summary};
 pub use alerts::Alerts;
+pub use archive_days::ArchiveDays;
 pub use archive_key::ArchiveKey;
 pub use archive_source::ArchiveSource;
 pub use backfill_cursor::BackfillCursor;

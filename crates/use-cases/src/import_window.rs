@@ -20,7 +20,6 @@ pub(crate) struct Opened<T> {
 }
 
 /// Whether work may go on inside an opened session.
-#[cfg_attr(not(test), expect(dead_code, reason = "used by the archive runners"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Fit {
     Yes,
@@ -67,7 +66,6 @@ pub(crate) async fn open_session<H: HealthProvider>(
 }
 
 /// Whether a request may start now in the session opened at `opened_at`.
-#[cfg_attr(not(test), expect(dead_code, reason = "used by the archive runners"))]
 pub(crate) fn fits(until: Timestamp, opened_at: Timestamp, clock: &impl Fn() -> Timestamp) -> Fit {
     let now = clock();
     if until.duration_since(now) < MARGIN {
