@@ -11,6 +11,7 @@ mod collect_weather;
 mod collector;
 mod daily_health;
 mod health;
+mod health_backfill;
 mod health_day;
 mod health_provider;
 mod history;
@@ -38,6 +39,7 @@ pub use collect_weather::collect_weather;
 pub use collector::Collector;
 pub use daily_health::DailyHealth;
 pub use health::{HEALTH_METRICS, HealthRow, build_health};
+pub use health_backfill::HealthBackfill;
 pub use health_day::HealthDay;
 pub use health_provider::HealthProvider;
 pub use history::{
