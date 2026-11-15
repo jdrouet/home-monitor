@@ -13,6 +13,7 @@ mod daily_health;
 mod health;
 mod health_backfill;
 mod health_day;
+mod health_import;
 mod health_provider;
 mod history;
 mod latest_values;
@@ -43,6 +44,7 @@ pub use daily_health::DailyHealth;
 pub use health::{HEALTH_METRICS, HealthRow, build_health};
 pub use health_backfill::{HealthBackfill, RunEnd};
 pub use health_day::HealthDay;
+pub use health_import::HealthImport;
 pub use health_provider::HealthProvider;
 pub use history::{
     HISTORY_METRICS, HistoryChart, HistorySelection, Period, build_history, history_query,

@@ -20,8 +20,8 @@ use state_file::BackfillFile;
 use tokio::net::TcpListener;
 use tokio::time::sleep;
 use use_cases::{
-    BackfillCursor, BackfillStore, HealthBackfill, HealthProvider, HealthPull, Publisher,
-    collect_health, report_session,
+    BackfillStore, HealthBackfill, HealthImport, HealthProvider, Publisher, collect_health,
+    report_session,
 };
 
 const CLIENT_ID: &str = "health-collector";
@@ -80,44 +80,55 @@ async fn collect(mqtt: &MqttConfig, health: &HealthCollectorConfig) -> anyhow::R
     let publisher = MqttPublisher::connect(&mqtt.host, mqtt.port, CLIENT_ID);
     let backfill_store =
         BackfillFile::new(health.token_file.with_file_name("garmin_backfill.json"));
+    let gap_store = BackfillFile::new(health.token_file.with_file_name("garmin_gap.json"));
     let source_id = SourceId::from(GARMIN.to_owned());
+    let import = HealthImport {
+        gap: HealthBackfill {
+            provider: &provider,
+            publisher: &publisher,
+            store: &gap_store,
+            source_id: &source_id,
+        },
+        yearly: HealthBackfill {
+            provider: &provider,
+            publisher: &publisher,
+            store: &backfill_store,
+            source_id: &source_id,
+        },
+    };
     tokio::select! {
         served = axum::serve(listener, router) => Err(anyhow!("health server ended: {served:?}")),
-        never = pull_forever(&provider, &publisher, &backfill_store, &source_id) => match never {},
+        never = pull_forever(&provider, &publisher, &import, &source_id) => match never {},
     }
 }
 
 /// Pulls at startup, then at every daily pull time. The next deadline is
 /// fixed before a pull starts, so a slow pull cannot skip it. A failed pull
-/// is not retried before the next one. Each pull reports the session status. After a completed pull the backfill
-/// runs until shortly before the next deadline.
-async fn pull_forever<H: HealthProvider, P: Publisher, S: BackfillStore>(
+/// is not retried before the next one. Each pull reports the session status.
+/// After a completed pull the gap fill and then the backfill run until
+/// shortly before the next deadline.
+async fn pull_forever<H: HealthProvider, P: Publisher, G: BackfillStore, B: BackfillStore>(
     provider: &H,
     publisher: &P,
-    backfill_store: &S,
+    import: &HealthImport<'_, H, P, G, B>,
     source_id: &SourceId,
 ) -> Infallible {
     loop {
         let started = Timestamp::now();
         let next = next_pull(started);
-        let today = paris_date(started);
-        let pull = collect_health(provider, publisher, source_id, &pull_days(started)).await;
+        let days = pull_days(started);
+        let pull = collect_health(provider, publisher, source_id, &days).await;
         report_session(publisher, source_id, &pull, started).await;
-        if matches!(pull, HealthPull::Completed { .. }) {
-            HealthBackfill {
-                provider,
-                publisher,
-                store: backfill_store,
-                source_id,
-            }
-            .run(
-                |stored| stored.unwrap_or_else(|| BackfillCursor::anchored_at(today)),
+        import
+            .after_pull(
+                &pull,
+                &days,
+                paris_date(started),
                 next,
                 Timestamp::now,
                 completed_day_stamp,
             )
             .await;
-        }
         sleep(wait_until(next, Timestamp::now())).await;
     }
 }
