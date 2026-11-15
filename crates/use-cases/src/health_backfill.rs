@@ -1,19 +1,9 @@
-use std::time::Duration;
-
 use chrono::NaiveDate;
 use domain::{Measurement, SourceId, SourceKind, Timestamp};
-use tokio::time::sleep;
 use tracing::{error, info, warn};
 
+use crate::import_window::{SESSION_MAX_AGE, open_session, turn};
 use crate::{BackfillCursor, BackfillStore, HealthProvider, Publisher};
-
-/// Wait before every Garmin step, a session open or one day, to stay far
-/// below the rate that gets clients blocked.
-const DAY_SPACING: Duration = Duration::from_secs(60);
-/// Time left before the deadline that a step must not eat into.
-const MARGIN: Duration = Duration::from_secs(5 * 60);
-/// A session is replaced after this long, well within the token's hour.
-const SESSION_MAX_AGE: Duration = Duration::from_secs(30 * 60);
 
 /// Imports health days one at a time, resuming from a persisted cursor, and
 /// stops before `until` so the daily pull is not delayed.
@@ -22,11 +12,6 @@ pub struct HealthBackfill<'a, H, P, S> {
     pub publisher: &'a P,
     pub store: &'a S,
     pub source_id: &'a SourceId,
-}
-
-struct Opened<T> {
-    session: T,
-    at: Timestamp,
 }
 
 enum Step {
@@ -66,7 +51,7 @@ impl<H: HealthProvider, P: Publisher, S: BackfillStore> HealthBackfill<'_, H, P,
         };
         let mut opened = None;
         while !cursor.is_done() {
-            let open = match self.session(opened.take(), until, &clock).await {
+            let open = match open_session(self.provider, opened.take(), until, &clock).await {
                 Ok(open) => open,
                 Err(end) => return end,
             };
@@ -115,32 +100,6 @@ impl<H: HealthProvider, P: Publisher, S: BackfillStore> HealthBackfill<'_, H, P,
         Ok(planned)
     }
 
-    /// `current`, else a new session after its own wait; the end when there is
-    /// no time left or Garmin refuses the session.
-    async fn session(
-        &self,
-        current: Option<Opened<H::Session>>,
-        until: Timestamp,
-        clock: &impl Fn() -> Timestamp,
-    ) -> Result<Opened<H::Session>, RunEnd> {
-        if let Some(current) = current {
-            return Ok(current);
-        }
-        if !turn(until, clock).await {
-            return Err(RunEnd::OutOfTime);
-        }
-        match self.provider.open().await {
-            Ok(session) => Ok(Opened {
-                session,
-                at: clock(),
-            }),
-            Err(error) => {
-                warn!(%error, "backfill session failed, resuming after the next pull");
-                Err(RunEnd::Stopped)
-            }
-        }
-    }
-
     async fn day(&self, session: &H::Session, date: NaiveDate, stamp: Timestamp) -> Step {
         let health = match self.provider.daily(session, date).await {
             Ok(health) => health,
@@ -173,16 +132,6 @@ impl<H: HealthProvider, P: Publisher, S: BackfillStore> HealthBackfill<'_, H, P,
             }
         }
     }
-}
-
-/// Waits `DAY_SPACING` if a step fits before `until`, checking again after the
-/// wait so a late wake starts nothing.
-async fn turn(until: Timestamp, clock: &impl Fn() -> Timestamp) -> bool {
-    if until.duration_since(clock()) < DAY_SPACING + MARGIN {
-        return false;
-    }
-    sleep(DAY_SPACING).await;
-    until.duration_since(clock()) >= MARGIN
 }
 
 #[cfg(test)]

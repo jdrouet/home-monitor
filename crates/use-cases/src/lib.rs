@@ -16,6 +16,7 @@ mod health_day;
 mod health_import;
 mod health_provider;
 mod history;
+mod import_window;
 mod latest_values;
 mod login_notification;
 mod measurement_store;
