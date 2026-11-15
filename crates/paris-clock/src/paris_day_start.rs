@@ -1,18 +1,11 @@
-use chrono::{DateTime, NaiveTime, TimeZone};
-use chrono_tz::Europe::Paris;
+use chrono::NaiveTime;
 use domain::Timestamp;
+
+use crate::{paris_at, paris_date};
 
 /// Midnight of the Europe/Paris day containing `now`.
 pub fn paris_day_start(now: Timestamp) -> Timestamp {
-    let local = DateTime::from_timestamp_micros(now.as_micros())
-        .expect("timestamp is within chrono's range")
-        .with_timezone(&Paris);
-    let midnight = local.date_naive().and_time(NaiveTime::MIN);
-    let start = Paris
-        .from_local_datetime(&midnight)
-        .earliest()
-        .expect("Paris midnight exists: DST changes happen at night");
-    Timestamp::from_micros(start.timestamp_micros())
+    paris_at(paris_date(now), NaiveTime::MIN)
 }
 
 #[cfg(test)]
