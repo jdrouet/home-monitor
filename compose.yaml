@@ -87,7 +87,18 @@ services:
       mosquitto:
         condition: service_healthy
 
+  health-collector:
+    <<: *service
+    image: ghcr.io/jdrouet/home-monitor-health-collector:latest
+    volumes:
+      - ./config.toml:/etc/home-monitor/config.toml:ro
+      - garmin-tokens:/tokens
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+
 volumes:
   alerter-data:
+  garmin-tokens:
   mosquitto-data:
   store-data:
