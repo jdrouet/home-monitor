@@ -1,6 +1,6 @@
 # ADR-0011: Narrow measurement schema, QoS 1 MQTT transport
 
-Status: accepted
+Status: accepted (daily timestamps amended by ADR-0022)
 
 ## Decision
 - Schema: `timestamp (UTC, µs) | source_kind | source_id | metric | value (f64)`.
