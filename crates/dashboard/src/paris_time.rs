@@ -2,13 +2,17 @@ use chrono::DateTime;
 use chrono_tz::Europe::Paris;
 use domain::Timestamp;
 
-/// `at` as `YYYY-MM-DD HH:MM` on the Europe/Paris clock.
+/// `at` as `YYYY-MM-DD HH:MM` on the Europe/Paris clock; `—` for an instant
+/// outside the calendar range.
 pub fn paris_time(at: Timestamp) -> String {
-    DateTime::from_timestamp_micros(at.as_micros())
-        .expect("timestamp is within chrono's range")
-        .with_timezone(&Paris)
-        .format("%Y-%m-%d %H:%M")
-        .to_string()
+    DateTime::from_timestamp_micros(at.as_micros()).map_or_else(
+        || "—".to_owned(),
+        |utc| {
+            utc.with_timezone(&Paris)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        },
+    )
 }
 
 #[cfg(test)]
@@ -31,5 +35,10 @@ mod tests {
     #[test]
     fn summer_time_is_two_hours_ahead_of_utc() {
         assert_eq!(paris_time(at("2026-07-15T23:30:00Z")), "2026-07-16 01:30");
+    }
+
+    #[test]
+    fn an_instant_out_of_range_does_not_panic() {
+        assert_eq!(paris_time(Timestamp::from_micros(i64::MAX)), "—");
     }
 }
