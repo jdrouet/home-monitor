@@ -30,8 +30,8 @@ memory for now.
   ntfy accepts them, retried at the next check.
 - `alerter` persists the delivered state of both rules (offline: last seen
   and notified at; temperature: direction, temperature and notified at) to
-  `[alerter] state_file`, default `/data/alerts.json`, on the `alerter-data`
-  volume. Format `{"version":1,...}`, written to a temp file, fsynced, renamed
+  `[alerter] state_file`, default `/data/alerts.json`, in the `data/alerter`
+  folder. Format `{"version":1,...}`, written to a temp file, fsynced, renamed
   and the directory fsynced. This replaces ADR-0017's in-memory state; sensors
   with no persisted offline alert still count as seen at startup.
 - The last notified temperature is persisted so reminders keep their schedule

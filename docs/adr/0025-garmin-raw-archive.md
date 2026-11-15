@@ -30,7 +30,7 @@ ADR-0024 runs the gap fill before the yearly backfill.
   variants, accessories and features not used, user-entered logs, settings and
   gamification, documents keyed by nested ids, write endpoints.
 - Layout: under `[health_collector] archive_dir` (optional, default
-  `/archive/garmin`, volume `garmin-archive`): `daily/<YYYY>/<YYYY-MM-DD>/<file>`
+  `/archive/garmin`, folder `data/garmin-archive`): `daily/<YYYY>/<YYYY-MM-DD>/<file>`
   and `activities/<YYYY>/<activityId>/<file>`. Bodies are stored as Garmin sent
   them and the original activity zip is not extracted. Files are written as in
   ADR-0019, with new directories created one level at a time and each new
@@ -86,7 +86,7 @@ ADR-0024 runs the gap fill before the yearly backfill.
 - Volume: about 72 requests per day in steady state; the history is about
   33,000 requests (about 15,700 for the days, about 17,200 for 1,000
   activities), about 51 h of windows (2 to 3 days).
-- Rollout: `git pull` (compose volume) first, then
+- Rollout: `git pull` (compose mount) first, then
   `docker compose pull health-collector && docker compose up -d health-collector`;
   set `archive_dir` only once the new image runs.
 - Rejected: archiving provisional "today" documents; extracting the activity

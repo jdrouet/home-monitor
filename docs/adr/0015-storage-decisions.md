@@ -32,7 +32,7 @@ without reading all history. ADR-0003, ADR-0006 and ADR-0011 leave the details o
   crate implements it and is the only crate depending on DataFusion (parquet
   feature only, no SQL). Queries and flushes exclude each other so a day is
   never read twice.
-- The data directory is set by `[store] data_dir` and mounted as a Compose volume.
+- The data directory is set by `[store] data_dir` and bind-mounted from `data/store` (ADR-0012).
 
 ## Consequences
 - No acked reading is lost and none is stored or served twice.

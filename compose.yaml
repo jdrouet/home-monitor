@@ -16,7 +16,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - mosquitto-data:/mosquitto/data
+      - ./data/mosquitto:/mosquitto/data
     healthcheck:
       test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-W", "3"]
       interval: 10s
@@ -41,7 +41,7 @@ services:
     image: ghcr.io/jdrouet/home-monitor-store:latest
     volumes:
       - ./config.toml:/etc/home-monitor/config.toml:ro
-      - store-data:/data
+      - ./data/store:/data
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -72,7 +72,7 @@ services:
     image: ghcr.io/jdrouet/home-monitor-alerter:latest
     volumes:
       - ./config.toml:/etc/home-monitor/config.toml:ro
-      - alerter-data:/data
+      - ./data/alerter:/data
     env_file: .env
     depends_on:
       mosquitto:
@@ -92,15 +92,8 @@ services:
     image: ghcr.io/jdrouet/home-monitor-health-collector:latest
     volumes:
       - ./config.toml:/etc/home-monitor/config.toml:ro
-      - garmin-tokens:/tokens
-      - garmin-archive:/archive
+      - ./data/garmin-tokens:/tokens
+      - ./data/garmin-archive:/archive
     depends_on:
       mosquitto:
         condition: service_healthy
-
-volumes:
-  alerter-data:
-  garmin-archive:
-  garmin-tokens:
-  mosquitto-data:
-  store-data:

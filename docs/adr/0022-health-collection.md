@@ -20,7 +20,7 @@ day's first, partial value would be kept and its final value dropped.
   and the MFA code, makes one attempt, stops on 403, 427 or 429, checks the
   token against the API and saves it. It never retries.
 - Tokens live in `[health_collector] token_file`, default
-  `/tokens/garmin_tokens.json` on the `garmin-tokens` volume, as
+  `/tokens/garmin_tokens.json` in the `data/garmin-tokens` folder (bind-mounted, ADR-0012), as
   `di_token`, `di_refresh_token`, `di_client_id`: python-garminconnect's
   format, so tokens obtained elsewhere can be copied in. The file is written
   0600 to a temp file, fsynced and renamed; its directory is 0700. Tokens,
@@ -55,7 +55,7 @@ day's first, partial value would be kept and its final value dropped.
 - Garmin's terms forbid unauthorized third-party access and Garmin blocks
   clients; logins or pulls can stop working without notice.
 - The login can be blocked by Cloudflare client fingerprinting; tokens can
-  then be produced elsewhere and copied into the volume.
+  then be produced elsewhere and copied into the tokens folder.
 - Yesterday keeps the value Garmin had at 10:00. The backfill (ADR-0023)
   covers only days before the first run, so later syncs and days whose 10:00
   pull failed are not repaired.
