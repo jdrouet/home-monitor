@@ -4,6 +4,7 @@ use chrono::NaiveDate;
 use reqwest::header::{ACCEPT, CACHE_CONTROL};
 use reqwest::{Client, StatusCode, Url};
 use serde::de::DeserializeOwned;
+use tokio::task::spawn_blocking;
 use tokio::time::sleep;
 use use_cases::{DailyHealth, HealthProvider};
 
@@ -52,14 +53,17 @@ impl GarminConnect {
         sleep(self.pause).await;
     }
 
-    /// Refreshes the stored tokens and saves the result before any other call,
-    /// all under the token file lock.
+    /// Refreshes the stored tokens and saves the result before any other call.
+    /// The lock is held from the load to the save and is taken off the runtime
+    /// thread, which other lock holders' requests may need.
     async fn refresh_and_save(&self) -> Result<Tokens, GarminError> {
-        let _lock = self.token_file.lock()?;
-        let stored = self.token_file.load()?;
+        let file = self.token_file.clone();
+        let (lock, stored) = blocking(move || Ok((file.lock()?, file.load()?))).await?;
         let fresh = self.refresh(&stored).await?;
-        self.token_file.save(&fresh)?;
-        Ok(fresh)
+        let file = self.token_file.clone();
+        let saved = blocking(move || file.save(&fresh).map(|()| fresh)).await;
+        drop(lock);
+        saved
     }
 
     async fn refresh(&self, stored: &Tokens) -> Result<Tokens, GarminError> {
@@ -116,6 +120,15 @@ impl GarminConnect {
         let profile: SocialProfile = self.fetch(&tokens.di_token, url).await?;
         profile.display_name()
     }
+}
+
+/// Runs token file I/O, which blocks, off the async runtime.
+pub(crate) async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, GarminError> + Send + 'static,
+) -> Result<T, GarminError> {
+    spawn_blocking(work)
+        .await
+        .expect("token file task does not panic")
 }
 
 impl HealthProvider for GarminConnect {
@@ -248,6 +261,20 @@ mod tests {
             "GET /userprofile-service/socialProfile HTTP/1.1"
         );
         assert!(profile.has_header("authorization: Bearer new-access-token"));
+    }
+
+    #[tokio::test]
+    async fn concurrent_opens_on_one_thread_both_complete() {
+        let dir = TempDir::new().expect("tempdir");
+        let both = r#"{"access_token":"a","refresh_token":"r","displayName":"Jane"}"#;
+        let replies = (0..4).map(|_| Reply::new(200, both)).collect();
+        let (connect, _server, _file) = connect(replies, &dir).await;
+        let (first, second) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(connect.open(), connect.open())
+        })
+        .await
+        .expect("no deadlock");
+        assert!(first.is_ok() && second.is_ok());
     }
 
     #[tokio::test]

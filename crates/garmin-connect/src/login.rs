@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 use crate::cookie_jar::CookieJar;
 use crate::endpoints::build_url;
+use crate::garmin_connect::blocking;
 use crate::native_headers::native_headers;
 use crate::sso_response::SsoOutcome;
 use crate::token_response::TokenResponse;
@@ -58,8 +59,12 @@ impl GarminConnect {
         };
         let tokens = self.exchange(&ticket).await?;
         self.display_name(&tokens).await?;
-        let _lock = self.token_file.lock()?;
-        self.token_file.save(&tokens)
+        let file = self.token_file.clone();
+        blocking(move || {
+            let _lock = file.lock()?;
+            file.save(&tokens)
+        })
+        .await
     }
 
     fn sign_in_url(&self) -> reqwest::Url {
