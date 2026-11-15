@@ -20,6 +20,8 @@ mod token_file;
 mod token_response;
 mod tokens;
 
+pub(crate) const JSON: &str = "application/json";
+
 pub use endpoints::Endpoints;
 pub use garmin_connect::GarminConnect;
 pub use garmin_document::GarminDocument;

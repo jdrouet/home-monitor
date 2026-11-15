@@ -15,9 +15,7 @@ struct Wire {
     start: u32,
     done: bool,
     catch_up: Option<u32>,
-    #[serde(default)]
     boundary: Option<u64>,
-    #[serde(default)]
     pending: Option<u64>,
 }
 
@@ -136,15 +134,6 @@ mod tests {
             json,
             r#"{"version":1,"start":0,"done":false,"catch_up":null,"boundary":null,"pending":null}"#
         );
-    }
-
-    #[test]
-    fn a_file_without_the_boundary_fields_loads_with_none() {
-        let dir = TempDir::new().expect("tempdir");
-        let json = r#"{"version":1,"start":5,"done":true,"catch_up":null}"#;
-        fs::write(dir.path().join("garmin_activities.json"), json).expect("write");
-        let cursor = file_in(&dir).load().expect("load").expect("cursor");
-        assert_eq!((cursor.boundary, cursor.pending), (None, None));
     }
 
     #[test]

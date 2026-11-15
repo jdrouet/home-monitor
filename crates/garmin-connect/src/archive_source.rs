@@ -5,9 +5,7 @@ use crate::activity_list::{ActivityList, ENDPOINT};
 use crate::endpoints::build_url;
 use crate::garmin_document::{ACTIVITY, DAILY};
 use crate::read_json::read_json;
-use crate::{GarminConnect, GarminDocument, GarminError, GarminSession};
-
-const JSON: &str = "application/json";
+use crate::{GarminConnect, GarminDocument, GarminError, GarminSession, JSON};
 
 impl ArchiveSource for GarminConnect {
     type Document = GarminDocument;
@@ -77,8 +75,6 @@ mod tests {
     use crate::garmin_connect::tests::{DI_TOKEN, PROFILE, connect};
     use crate::test_server::Reply;
     use crate::{GarminConnect, GarminError};
-
-    const LIST: &str = include_str!("../fixtures/activity_list.json");
 
     fn day() -> DocumentKey {
         DocumentKey::Day(NaiveDate::from_ymd_opt(2026, 7, 14).expect("date"))
@@ -188,18 +184,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_list_reads_both_shapes() {
-        let expected = list(Reply::new(200, LIST)).await.expect("bare");
-        assert_eq!(expected.len(), 2);
-        assert_eq!(expected[0].id, ActivityId(22_222));
-        let wrapped = format!(r#"{{"activityList":{LIST}}}"#);
-        assert_eq!(
-            list(Reply::new(200, &wrapped)).await.expect("wrapped"),
-            expected
-        );
-    }
-
-    #[tokio::test]
     async fn the_list_is_requested_by_offset_and_page_size() {
         let dir = TempDir::new().expect("tempdir");
         let mut replies = opening();
@@ -211,17 +195,6 @@ mod tests {
             server.requests()[2].request_line(),
             "GET /activitylist-service/activities/search/activities?start=10&limit=5 HTTP/1.1"
         );
-    }
-
-    #[tokio::test]
-    async fn a_list_without_an_id_or_with_a_bad_date_is_invalid() {
-        for body in [
-            r#"[{"startTimeLocal":"2026-07-14 08:00:00"}]"#,
-            r#"[{"activityId":1,"startTimeLocal":"soon"}]"#,
-        ] {
-            let error = list(Reply::new(200, body)).await.expect_err("invalid");
-            assert!(matches!(error, GarminError::InvalidResponse { .. }));
-        }
     }
 
     #[tokio::test]

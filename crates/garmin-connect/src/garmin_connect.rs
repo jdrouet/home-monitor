@@ -17,7 +17,7 @@ use crate::pacer::Pacer;
 use crate::read_json::read_json;
 use crate::social_profile::SocialProfile;
 use crate::token_response::TokenResponse;
-use crate::{Endpoints, GarminError, GarminSession, TokenFile, Tokens};
+use crate::{Endpoints, GarminError, GarminSession, JSON, TokenFile, Tokens};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 const API_REDIRECTS: u8 = 3;
@@ -126,7 +126,7 @@ impl GarminConnect {
             .post(self.endpoints.token.clone())
             .headers(native_headers())
             .basic_auth(&stored.di_client_id, Some(""))
-            .header(ACCEPT, "application/json")
+            .header(ACCEPT, JSON)
             .header(CACHE_CONTROL, "no-cache")
             .form(&[
                 ("grant_type", "refresh_token"),
@@ -152,7 +152,7 @@ impl GarminConnect {
         url: Url,
         endpoint: &'static str,
     ) -> Result<T, GarminError> {
-        let response = self.send_get(token, url, "application/json").await?;
+        let response = self.send_get(token, url, JSON).await?;
         match response.status() {
             status @ (StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) => {
                 Err(GarminError::SessionRejected(status))

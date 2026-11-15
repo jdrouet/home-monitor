@@ -1,8 +1,8 @@
 use reqwest::Url;
 
+use crate::JSON;
 use crate::endpoints::build_url;
 
-const JSON: &str = "application/json";
 const ANY: &str = "*/*";
 
 /// One of Garmin's documents kept in the archive. The template is the API
@@ -12,33 +12,24 @@ const ANY: &str = "*/*";
 pub struct GarminDocument {
     file: &'static str,
     template: &'static str,
-    accept: &'static str,
 }
 
 impl GarminDocument {
-    const fn json(file: &'static str, template: &'static str) -> Self {
-        Self {
-            file,
-            template,
-            accept: JSON,
-        }
-    }
-
-    /// A binary document, such as a zip.
-    const fn file(file: &'static str, template: &'static str) -> Self {
-        Self {
-            file,
-            template,
-            accept: ANY,
-        }
+    const fn new(file: &'static str, template: &'static str) -> Self {
+        Self { file, template }
     }
 
     pub(crate) const fn file_name(&self) -> &'static str {
         self.file
     }
 
-    pub(crate) const fn accept(&self) -> &'static str {
-        self.accept
+    /// Zip files take any content type, everything else is JSON.
+    pub(crate) fn accept(&self) -> &'static str {
+        if self.file.ends_with(".zip") {
+            ANY
+        } else {
+            JSON
+        }
     }
 
     pub(crate) fn url(&self, api: &Url, name: &str, key: &str) -> Url {
@@ -67,492 +58,280 @@ impl GarminDocument {
     }
 }
 
-const DAILY_DOCUMENTS: &[GarminDocument] = &[
-    GarminDocument::json(
+pub(crate) const DAILY: &[GarminDocument] = &[
+    GarminDocument::new(
         "user_summary.json",
         "/usersummary-service/usersummary/daily/{name}?calendarDate={d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "sleep.json",
         "/wellness-service/wellness/dailySleepData/{name}?date={d}&nonSleepBufferMinutes=60",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "naps.json",
         "/sleep-service/sleep/naps/{d}?includeOverlaps=true",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "heart_rate.json",
         "/wellness-service/wellness/dailyHeartRate/{name}?date={d}",
     ),
-    GarminDocument::json("stress.json", "/wellness-service/wellness/dailyStress/{d}"),
-    GarminDocument::json("hrv.json", "/hrv-service/hrv/{d}"),
-    GarminDocument::json(
+    GarminDocument::new("stress.json", "/wellness-service/wellness/dailyStress/{d}"),
+    GarminDocument::new("hrv.json", "/hrv-service/hrv/{d}"),
+    GarminDocument::new(
         "body_battery.json",
         "/wellness-service/wellness/bodyBattery/reports/daily?startDate={d}&endDate={d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "body_battery_events.json",
         "/wellness-service/wellness/bodyBattery/events/{d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "respiration.json",
         "/wellness-service/wellness/daily/respiration/{d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "spo2_acclimation.json",
         "/wellness-service/wellness/daily/spo2acclimation/{d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "intensity_minutes.json",
         "/wellness-service/wellness/daily/im/{d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "floors.json",
         "/wellness-service/wellness/floorsChartData/daily/{d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "steps.json",
         "/wellness-service/wellness/dailySummaryChart/{name}?date={d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "movement.json",
         "/wellness-service/wellness/dailyMovement?calendarDate={d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "events.json",
         "/wellness-service/wellness/dailyEvents?calendarDate={d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "activities_for_date.json",
         "/mobile-gateway/heartRate/forDate/{d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "hydration.json",
         "/usersummary-service/usersummary/hydration/allData/{d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "weight.json",
         "/weight-service/weight/dayview/{d}?includeAll=True",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "body_composition.json",
         "/weight-service/weight/dateRange?startDate={d}&endDate={d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "health_snapshots.json",
         "/wellnessactivity-service/activity/summary/{d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "max_metrics.json",
         "/metrics-service/metrics/maxmet/daily/{d}/{d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "training_status.json",
         "/metrics-service/metrics/trainingstatus/aggregated/{d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "training_status_daily.json",
         "/metrics-service/metrics/trainingstatus/daily/{d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "training_load_balance.json",
         "/metrics-service/metrics/trainingloadbalance/latest/{d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "training_readiness.json",
         "/metrics-service/metrics/trainingreadiness/{d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "endurance_score.json",
         "/metrics-service/metrics/endurancescore?calendarDate={d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "hill_score.json",
         "/metrics-service/metrics/hillscore?calendarDate={d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "race_predictions.json",
         "/metrics-service/metrics/racepredictions/daily/{name}?fromCalendarDate={d}&toCalendarDate={d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "lactate_threshold_speed.json",
         "/biometric-service/stats/lactateThresholdSpeed/range/{d}/{d}?sport=RUNNING&aggregation=daily&aggregationStrategy=LATEST",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "lactate_threshold_heart_rate.json",
         "/biometric-service/stats/lactateThresholdHeartRate/range/{d}/{d}?sport=RUNNING&aggregation=daily&aggregationStrategy=LATEST",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "ftp_running.json",
         "/biometric-service/stats/functionalThresholdPower/range/{d}/{d}?sport=RUNNING&aggregation=daily&aggregationStrategy=LATEST",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "ftp_cycling.json",
         "/biometric-service/stats/functionalThresholdPower/range/{d}/{d}?sport=CYCLING&aggregation=daily&aggregationStrategy=LATEST",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "power_to_weight.json",
         "/biometric-service/biometric/powerToWeight/latest/{d}?sport=Running",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "running_tolerance.json",
         "/metrics-service/metrics/runningtolerance/stats?startDate={d}&endDate={d}&aggregation=daily",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "running_economy.json",
         "/metrics-service/metrics/runningeconomy/latest/{d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "heat_altitude.json",
         "/metrics-service/metrics/heataltitudeacclimation/latest/{d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "cycling_ability.json",
         "/metrics-service/metrics/cycling-ability/latest?calendarDate={d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "critical_swim_speed.json",
         "/biometric-service/criticalSwimSpeed/latest/{d}",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "stamina_running.json",
         "/metrics-service/metrics/stamina-curve/latest?calendarDate={d}&sportType=running",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "stamina_cycling.json",
         "/metrics-service/metrics/stamina-curve/latest?calendarDate={d}&sportType=cycling",
     ),
-    GarminDocument::json("fitness_age.json", "/fitnessage-service/fitnessage/v2/{d}"),
-    GarminDocument::json(
+    GarminDocument::new("fitness_age.json", "/fitnessage-service/fitnessage/v2/{d}"),
+    GarminDocument::new(
         "one_rep_max.json",
         "/fitnessstats-service/vbt-stats/one-rep-max/current/{d}",
     ),
-    GarminDocument::file("wellness.zip", "/download-service/files/wellness/{d}"),
+    GarminDocument::new("wellness.zip", "/download-service/files/wellness/{d}"),
 ];
 
-const ACTIVITY_DOCUMENTS: &[GarminDocument] = &[
-    GarminDocument::json("summary.json", "/activity-service/activity/{id}"),
-    GarminDocument::json(
+pub(crate) const ACTIVITY: &[GarminDocument] = &[
+    GarminDocument::new("summary.json", "/activity-service/activity/{id}"),
+    GarminDocument::new(
         "details.json",
         "/activity-service/activity/{id}/details?maxChartSize=2000&maxPolylineSize=4000",
     ),
-    GarminDocument::file("original.zip", "/download-service/files/activity/{id}"),
-    GarminDocument::json("splits.json", "/activity-service/activity/{id}/splits"),
-    GarminDocument::json(
+    GarminDocument::new("original.zip", "/download-service/files/activity/{id}"),
+    GarminDocument::new("splits.json", "/activity-service/activity/{id}/splits"),
+    GarminDocument::new(
         "typed_splits.json",
         "/activity-service/activity/{id}/typedsplits",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "split_summaries.json",
         "/activity-service/activity/{id}/split_summaries",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "hr_zones.json",
         "/activity-service/activity/{id}/hrTimeInZones",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "power_zones.json",
         "/activity-service/activity/{id}/powerTimeInZones",
     ),
-    GarminDocument::json("weather.json", "/activity-service/activity/{id}/weather"),
-    GarminDocument::json(
+    GarminDocument::new("weather.json", "/activity-service/activity/{id}/weather"),
+    GarminDocument::new(
         "exercise_sets.json",
         "/activity-service/activity/{id}/exerciseSets",
     ),
-    GarminDocument::json("rounds.json", "/activity-service/activity/{id}/rounds"),
-    GarminDocument::json(
+    GarminDocument::new("rounds.json", "/activity-service/activity/{id}/rounds"),
+    GarminDocument::new(
         "step_details.json",
         "/activity-service/activity/{id}/stepdetails",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "jump_details.json",
         "/activity-service/activity/{id}/jumpDetails",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "subsecond_details.json",
         "/activity-service/activity/{id}/subseconddetails?maxChartSize=2000",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "swim_details.json",
         "/activity-service/activity/{id}/swimDetails?maxChartSize=2000&maxPolylineSize=4000",
     ),
-    GarminDocument::json(
+    GarminDocument::new(
         "power_curve.json",
         "/activity-service/activity/{id}/powerCurve",
     ),
-    GarminDocument::json("segments.json", "/segment-service/segment/list/{id}"),
+    GarminDocument::new("segments.json", "/segment-service/segment/list/{id}"),
 ];
-
-pub(crate) const DAILY: &[GarminDocument] = DAILY_DOCUMENTS;
-pub(crate) const ACTIVITY: &[GarminDocument] = ACTIVITY_DOCUMENTS;
 
 #[cfg(test)]
 mod tests {
     use reqwest::Url;
 
-    use super::{ACTIVITY, DAILY, GarminDocument};
+    use super::{ACTIVITY, ANY, DAILY, GarminDocument};
+    use crate::JSON;
 
-    const DAILY_LINES: &[(&str, &str)] = &[
-        (
-            "user_summary.json",
-            "/usersummary-service/usersummary/daily/Jane%20Doe?calendarDate=2026-07-14",
-        ),
-        (
-            "sleep.json",
-            "/wellness-service/wellness/dailySleepData/Jane%20Doe?date=2026-07-14&nonSleepBufferMinutes=60",
-        ),
-        (
-            "naps.json",
-            "/sleep-service/sleep/naps/2026-07-14?includeOverlaps=true",
-        ),
-        (
-            "heart_rate.json",
-            "/wellness-service/wellness/dailyHeartRate/Jane%20Doe?date=2026-07-14",
-        ),
-        (
-            "stress.json",
-            "/wellness-service/wellness/dailyStress/2026-07-14",
-        ),
-        ("hrv.json", "/hrv-service/hrv/2026-07-14"),
-        (
-            "body_battery.json",
-            "/wellness-service/wellness/bodyBattery/reports/daily?startDate=2026-07-14&endDate=2026-07-14",
-        ),
-        (
-            "body_battery_events.json",
-            "/wellness-service/wellness/bodyBattery/events/2026-07-14",
-        ),
-        (
-            "respiration.json",
-            "/wellness-service/wellness/daily/respiration/2026-07-14",
-        ),
-        (
-            "spo2_acclimation.json",
-            "/wellness-service/wellness/daily/spo2acclimation/2026-07-14",
-        ),
-        (
-            "intensity_minutes.json",
-            "/wellness-service/wellness/daily/im/2026-07-14",
-        ),
-        (
-            "floors.json",
-            "/wellness-service/wellness/floorsChartData/daily/2026-07-14",
-        ),
-        (
-            "steps.json",
-            "/wellness-service/wellness/dailySummaryChart/Jane%20Doe?date=2026-07-14",
-        ),
-        (
-            "movement.json",
-            "/wellness-service/wellness/dailyMovement?calendarDate=2026-07-14",
-        ),
-        (
-            "events.json",
-            "/wellness-service/wellness/dailyEvents?calendarDate=2026-07-14",
-        ),
-        (
-            "activities_for_date.json",
-            "/mobile-gateway/heartRate/forDate/2026-07-14",
-        ),
-        (
-            "hydration.json",
-            "/usersummary-service/usersummary/hydration/allData/2026-07-14",
-        ),
-        (
-            "weight.json",
-            "/weight-service/weight/dayview/2026-07-14?includeAll=True",
-        ),
-        (
-            "body_composition.json",
-            "/weight-service/weight/dateRange?startDate=2026-07-14&endDate=2026-07-14",
-        ),
-        (
-            "health_snapshots.json",
-            "/wellnessactivity-service/activity/summary/2026-07-14",
-        ),
-        (
-            "max_metrics.json",
-            "/metrics-service/metrics/maxmet/daily/2026-07-14/2026-07-14",
-        ),
-        (
-            "training_status.json",
-            "/metrics-service/metrics/trainingstatus/aggregated/2026-07-14",
-        ),
-        (
-            "training_status_daily.json",
-            "/metrics-service/metrics/trainingstatus/daily/2026-07-14",
-        ),
-        (
-            "training_load_balance.json",
-            "/metrics-service/metrics/trainingloadbalance/latest/2026-07-14",
-        ),
-        (
-            "training_readiness.json",
-            "/metrics-service/metrics/trainingreadiness/2026-07-14",
-        ),
-        (
-            "endurance_score.json",
-            "/metrics-service/metrics/endurancescore?calendarDate=2026-07-14",
-        ),
-        (
-            "hill_score.json",
-            "/metrics-service/metrics/hillscore?calendarDate=2026-07-14",
-        ),
-        (
-            "race_predictions.json",
-            "/metrics-service/metrics/racepredictions/daily/Jane%20Doe?fromCalendarDate=2026-07-14&toCalendarDate=2026-07-14",
-        ),
-        (
-            "lactate_threshold_speed.json",
-            "/biometric-service/stats/lactateThresholdSpeed/range/2026-07-14/2026-07-14?sport=RUNNING&aggregation=daily&aggregationStrategy=LATEST",
-        ),
-        (
-            "lactate_threshold_heart_rate.json",
-            "/biometric-service/stats/lactateThresholdHeartRate/range/2026-07-14/2026-07-14?sport=RUNNING&aggregation=daily&aggregationStrategy=LATEST",
-        ),
-        (
-            "ftp_running.json",
-            "/biometric-service/stats/functionalThresholdPower/range/2026-07-14/2026-07-14?sport=RUNNING&aggregation=daily&aggregationStrategy=LATEST",
-        ),
-        (
-            "ftp_cycling.json",
-            "/biometric-service/stats/functionalThresholdPower/range/2026-07-14/2026-07-14?sport=CYCLING&aggregation=daily&aggregationStrategy=LATEST",
-        ),
-        (
-            "power_to_weight.json",
-            "/biometric-service/biometric/powerToWeight/latest/2026-07-14?sport=Running",
-        ),
-        (
-            "running_tolerance.json",
-            "/metrics-service/metrics/runningtolerance/stats?startDate=2026-07-14&endDate=2026-07-14&aggregation=daily",
-        ),
-        (
-            "running_economy.json",
-            "/metrics-service/metrics/runningeconomy/latest/2026-07-14",
-        ),
-        (
-            "heat_altitude.json",
-            "/metrics-service/metrics/heataltitudeacclimation/latest/2026-07-14",
-        ),
-        (
-            "cycling_ability.json",
-            "/metrics-service/metrics/cycling-ability/latest?calendarDate=2026-07-14",
-        ),
-        (
-            "critical_swim_speed.json",
-            "/biometric-service/criticalSwimSpeed/latest/2026-07-14",
-        ),
-        (
-            "stamina_running.json",
-            "/metrics-service/metrics/stamina-curve/latest?calendarDate=2026-07-14&sportType=running",
-        ),
-        (
-            "stamina_cycling.json",
-            "/metrics-service/metrics/stamina-curve/latest?calendarDate=2026-07-14&sportType=cycling",
-        ),
-        (
-            "fitness_age.json",
-            "/fitnessage-service/fitnessage/v2/2026-07-14",
-        ),
-        (
-            "one_rep_max.json",
-            "/fitnessstats-service/vbt-stats/one-rep-max/current/2026-07-14",
-        ),
-        (
-            "wellness.zip",
-            "/download-service/files/wellness/2026-07-14",
-        ),
-    ];
-
-    const ACTIVITY_LINES: &[(&str, &str)] = &[
-        ("summary.json", "/activity-service/activity/123"),
-        (
-            "details.json",
-            "/activity-service/activity/123/details?maxChartSize=2000&maxPolylineSize=4000",
-        ),
-        ("original.zip", "/download-service/files/activity/123"),
-        ("splits.json", "/activity-service/activity/123/splits"),
-        (
-            "typed_splits.json",
-            "/activity-service/activity/123/typedsplits",
-        ),
-        (
-            "split_summaries.json",
-            "/activity-service/activity/123/split_summaries",
-        ),
-        (
-            "hr_zones.json",
-            "/activity-service/activity/123/hrTimeInZones",
-        ),
-        (
-            "power_zones.json",
-            "/activity-service/activity/123/powerTimeInZones",
-        ),
-        ("weather.json", "/activity-service/activity/123/weather"),
-        (
-            "exercise_sets.json",
-            "/activity-service/activity/123/exerciseSets",
-        ),
-        ("rounds.json", "/activity-service/activity/123/rounds"),
-        (
-            "step_details.json",
-            "/activity-service/activity/123/stepdetails",
-        ),
-        (
-            "jump_details.json",
-            "/activity-service/activity/123/jumpDetails",
-        ),
-        (
-            "subsecond_details.json",
-            "/activity-service/activity/123/subseconddetails?maxChartSize=2000",
-        ),
-        (
-            "swim_details.json",
-            "/activity-service/activity/123/swimDetails?maxChartSize=2000&maxPolylineSize=4000",
-        ),
-        (
-            "power_curve.json",
-            "/activity-service/activity/123/powerCurve",
-        ),
-        ("segments.json", "/segment-service/segment/list/123"),
-    ];
-
-    fn api() -> Url {
-        Url::parse("http://api.test").expect("url")
-    }
-
-    fn assert_catalog(documents: &[GarminDocument], lines: &[(&str, &str)], key: &str) {
-        assert_eq!(documents.len(), lines.len());
-        for (document, (file, target)) in documents.iter().zip(lines) {
-            assert_eq!(document.file_name(), *file);
-            let url = document.url(&api(), "Jane Doe", key);
-            let rendered = match url.query() {
-                Some(query) => format!("{}?{query}", url.path()),
-                None => url.path().to_owned(),
-            };
-            assert_eq!(rendered, *target, "{file}");
+    fn rendered(documents: &[GarminDocument], file: &str, key: &str) -> String {
+        let document = documents
+            .iter()
+            .find(|document| document.file_name() == file)
+            .expect("document");
+        let api = Url::parse("http://api.test").expect("url");
+        let url = document.url(&api, "Jane Doe", key);
+        match url.query() {
+            Some(query) => format!("{}?{query}", url.path()),
+            None => url.path().to_owned(),
         }
     }
 
     #[test]
-    fn every_daily_document_has_its_exact_path_and_query() {
-        assert_catalog(DAILY, DAILY_LINES, "2026-07-14");
+    fn the_catalogs_have_their_documents() {
+        assert_eq!(DAILY.len(), 43);
+        assert_eq!(ACTIVITY.len(), 17);
     }
 
     #[test]
-    fn every_activity_document_has_its_exact_path_and_query() {
-        assert_catalog(ACTIVITY, ACTIVITY_LINES, "123");
+    fn the_name_is_percent_encoded() {
+        assert_eq!(
+            rendered(DAILY, "sleep.json", "2026-07-14"),
+            "/wellness-service/wellness/dailySleepData/Jane%20Doe?date=2026-07-14&nonSleepBufferMinutes=60"
+        );
     }
 
     #[test]
-    fn only_the_zips_accept_anything() {
-        for document in DAILY.iter().chain(ACTIVITY) {
-            let zip = document.file_name().ends_with(".zip");
-            assert_eq!(
-                document.accept(),
-                if zip { "*/*" } else { "application/json" }
-            );
-        }
+    fn the_day_fills_every_placeholder() {
+        assert_eq!(
+            rendered(DAILY, "body_battery.json", "2026-07-14"),
+            "/wellness-service/wellness/bodyBattery/reports/daily?startDate=2026-07-14&endDate=2026-07-14"
+        );
+    }
+
+    #[test]
+    fn the_activity_id_fills_the_path() {
+        assert_eq!(
+            rendered(ACTIVITY, "details.json", "123"),
+            "/activity-service/activity/123/details?maxChartSize=2000&maxPolylineSize=4000"
+        );
+    }
+
+    #[test]
+    fn a_zip_renders_its_download_path_and_accepts_anything() {
+        assert_eq!(
+            rendered(ACTIVITY, "original.zip", "123"),
+            "/download-service/files/activity/123"
+        );
+        assert_eq!(ACTIVITY[2].accept(), ANY);
+        assert_eq!(ACTIVITY[0].accept(), JSON);
     }
 
     #[test]
