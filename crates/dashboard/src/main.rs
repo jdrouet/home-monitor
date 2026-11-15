@@ -1,6 +1,7 @@
 mod overview_page;
 mod paris_day_start;
 mod store_client;
+mod uplot_assets;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -42,6 +43,11 @@ fn app(config: &Config) -> anyhow::Result<Router> {
     Ok(Router::new()
         .route("/", get(overview))
         .route("/healthz", get(|| async { "ok" }))
+        .route("/assets/uplot-1.6.32.min.js", get(uplot_assets::script))
+        .route(
+            "/assets/uplot-1.6.32.min.css",
+            get(uplot_assets::stylesheet),
+        )
         .with_state(state))
 }
 
