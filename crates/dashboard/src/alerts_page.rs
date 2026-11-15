@@ -66,13 +66,27 @@ mod tests {
                     celsius: None,
                     since: at("2026-01-15T10:00:00Z"),
                 },
+                ActiveAlertLine {
+                    subject: "Garmin".to_owned(),
+                    kind: AlertKind::GarminLogin,
+                    celsius: None,
+                    since: at("2026-01-15T09:00:00Z"),
+                },
             ],
-            resolved: vec![ResolvedAlertLine {
-                subject: "living room".to_owned(),
-                kind: AlertKind::TooCold,
-                started: at("2026-07-15T08:00:00Z"),
-                ended: at("2026-07-15T23:30:00Z"),
-            }],
+            resolved: vec![
+                ResolvedAlertLine {
+                    subject: "living room".to_owned(),
+                    kind: AlertKind::TooCold,
+                    started: at("2026-07-15T08:00:00Z"),
+                    ended: at("2026-07-15T23:30:00Z"),
+                },
+                ResolvedAlertLine {
+                    subject: "Garmin".to_owned(),
+                    kind: AlertKind::GarminLogin,
+                    started: at("2026-03-01T08:00:00Z"),
+                    ended: at("2026-03-02T08:00:00Z"),
+                },
+            ],
         }
     }
 
@@ -92,6 +106,7 @@ mod tests {
         assert!(html.contains("since 2026-01-15 13:30"));
         assert!(html.contains("office"));
         assert!(html.contains("offline"));
+        assert!(html.contains("Garmin: login expired, since 2026-01-15 10:00"));
         assert!(!html.contains("No active alerts."));
     }
 
@@ -103,6 +118,7 @@ mod tests {
         assert!(html.contains("too cold"));
         assert!(html.contains("2026-07-15 10:00"));
         assert!(html.contains("2026-07-16 01:30"));
+        assert!(html.contains("Garmin: login expired, from 2026-03-01 09:00 to 2026-03-02 09:00"));
         assert!(!html.contains("No alerts resolved"));
     }
 

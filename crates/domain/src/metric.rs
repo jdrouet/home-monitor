@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 /// minimum and maximum are today's, in degrees Celsius. The daily health
 /// metrics are sleep duration in seconds, a sleep score from 0 to 100, resting
 /// heart rate in beats per minute, a step count and Body Battery levels from 0
-/// to 100.
+/// to 100. `SessionValid` is 1 when the Garmin session worked and 0 when a
+/// login is needed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Metric {
@@ -21,6 +22,7 @@ pub enum Metric {
     Steps,
     BodyBatteryMax,
     BodyBatteryMin,
+    SessionValid,
 }
 
 impl Metric {
@@ -38,6 +40,7 @@ impl Metric {
             Self::Steps => "steps",
             Self::BodyBatteryMax => "body_battery_max",
             Self::BodyBatteryMin => "body_battery_min",
+            Self::SessionValid => "session_valid",
         }
     }
 }
@@ -61,6 +64,7 @@ mod tests {
             Metric::Steps,
             Metric::BodyBatteryMax,
             Metric::BodyBatteryMin,
+            Metric::SessionValid,
         ] {
             let json = serde_json::to_string(&metric).expect("metric serializes");
             assert_eq!(json, format!("\"{}\"", metric.as_str()));

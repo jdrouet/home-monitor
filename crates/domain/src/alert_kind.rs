@@ -9,6 +9,7 @@ pub enum AlertKind {
     Offline,
     TooCold,
     TooHot,
+    GarminLogin,
 }
 
 impl From<Deviation> for AlertKind {

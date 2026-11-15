@@ -13,15 +13,18 @@ mod daily_health;
 mod health;
 mod health_backfill;
 mod health_day;
+mod health_import;
 mod health_provider;
 mod history;
 mod latest_values;
+mod login_notification;
 mod measurement_store;
 mod notification;
 mod notifier;
 mod offline_notification;
 mod overview;
 mod publisher;
+mod report_session;
 mod temperature_notification;
 mod weather_provider;
 mod weather_report;
@@ -39,8 +42,9 @@ pub use collect_weather::collect_weather;
 pub use collector::Collector;
 pub use daily_health::DailyHealth;
 pub use health::{HEALTH_METRICS, HealthRow, build_health};
-pub use health_backfill::HealthBackfill;
+pub use health_backfill::{HealthBackfill, RunEnd};
 pub use health_day::HealthDay;
+pub use health_import::HealthImport;
 pub use health_provider::HealthProvider;
 pub use history::{
     HISTORY_METRICS, HistoryChart, HistorySelection, Period, build_history, history_query,
@@ -54,5 +58,6 @@ pub use overview::{
     build_overview,
 };
 pub use publisher::Publisher;
+pub use report_session::report_session;
 pub use weather_provider::WeatherProvider;
 pub use weather_report::WeatherReport;

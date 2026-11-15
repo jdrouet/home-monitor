@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::MacAddress;
 
+/// The source id of the Garmin account's health data.
+pub const GARMIN: &str = "garmin";
+
 /// Identifies the device a measurement came from, such as a MAC address.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]

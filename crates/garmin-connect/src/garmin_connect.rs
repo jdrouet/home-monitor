@@ -1,3 +1,4 @@
+use std::io;
 use std::time::Duration;
 
 use chrono::NaiveDate;
@@ -186,10 +187,12 @@ impl HealthProvider for GarminConnect {
     }
 
     fn is_session_error(error: &GarminError) -> bool {
-        matches!(
-            error,
-            GarminError::Refresh(_) | GarminError::SessionRejected(_)
-        )
+        match error {
+            GarminError::SessionRejected(_) | GarminError::InvalidTokenFile { .. } => true,
+            GarminError::Refresh(status) => matches!(status.as_u16(), 400 | 401 | 403),
+            GarminError::TokenFile { source, .. } => source.kind() == io::ErrorKind::NotFound,
+            _ => false,
+        }
     }
 
     fn is_throttled(error: &GarminError) -> bool {
@@ -204,6 +207,7 @@ impl HealthProvider for GarminConnect {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io;
     use std::time::Duration;
 
     use chrono::NaiveDate;
@@ -340,8 +344,51 @@ mod tests {
         fs::remove_file(dir.path().join("garmin_tokens.json")).expect("remove");
         let error = connect.open().await.expect_err("no tokens");
         assert!(matches!(error, GarminError::TokenFile { .. }));
-        assert!(!GarminConnect::is_session_error(&error));
+        assert!(GarminConnect::is_session_error(&error));
         assert!(server.requests().is_empty());
+    }
+
+    #[test]
+    fn an_unreadable_token_file_is_not_a_session_error() {
+        let error = GarminError::TokenFile {
+            path: "garmin_tokens.json".into(),
+            source: io::Error::from(io::ErrorKind::PermissionDenied),
+        };
+        assert!(!GarminConnect::is_session_error(&error));
+    }
+
+    #[tokio::test]
+    async fn an_invalid_token_file_is_a_session_error() {
+        let dir = TempDir::new().expect("tempdir");
+        let (connect, server, _) = connect(vec![], &dir).await;
+        fs::write(dir.path().join("garmin_tokens.json"), "not json").expect("write");
+        let error = connect.open().await.expect_err("invalid tokens");
+        assert!(matches!(error, GarminError::InvalidTokenFile { .. }));
+        assert!(GarminConnect::is_session_error(&error));
+        assert!(server.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn only_explicit_refresh_refusals_are_session_errors() {
+        for (status, session) in [
+            (400, true),
+            (401, true),
+            (403, true),
+            (408, false),
+            (500, false),
+            (427, false),
+            (429, false),
+        ] {
+            let dir = TempDir::new().expect("tempdir");
+            let (connect, _server, _file) = connect(vec![Reply::status(status)], &dir).await;
+            let error = connect.open().await.expect_err("refresh fails");
+            assert_eq!(GarminConnect::is_session_error(&error), session, "{status}");
+            assert_eq!(
+                GarminConnect::is_throttled(&error),
+                matches!(status, 427 | 429),
+                "{status}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -452,15 +499,6 @@ mod tests {
                 assert!(!GarminConnect::is_session_error(&error));
             }
         }
-    }
-
-    #[tokio::test]
-    async fn throttling_on_refresh_is_throttled_and_a_session_error() {
-        let dir = TempDir::new().expect("tempdir");
-        let (connect, _server, _file) = connect(vec![Reply::status(427)], &dir).await;
-        let error = connect.open().await.expect_err("throttled");
-        assert!(GarminConnect::is_throttled(&error));
-        assert!(GarminConnect::is_session_error(&error));
     }
 
     #[tokio::test]
