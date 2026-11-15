@@ -85,12 +85,15 @@ impl GarminConnect {
     }
 
     /// GETs `url` as the signed-in user. The token goes only to the API host.
-    async fn send_get(&self, token: &str, url: Url) -> Result<Response, GarminError> {
+    pub(crate) async fn send_get(
+        &self,
+        token: &str,
+        url: Url,
+        accept: &'static str,
+    ) -> Result<Response, GarminError> {
         let api = self.endpoints.api.origin();
         self.get_following(url, API_REDIRECTS, |request, url, _| {
-            let request = request
-                .headers(native_headers())
-                .header(ACCEPT, "application/json");
+            let request = request.headers(native_headers()).header(ACCEPT, accept);
             if url.origin() == api {
                 request.bearer_auth(token)
             } else {
@@ -149,7 +152,7 @@ impl GarminConnect {
         url: Url,
         endpoint: &'static str,
     ) -> Result<T, GarminError> {
-        let response = self.send_get(token, url).await?;
+        let response = self.send_get(token, url, "application/json").await?;
         match response.status() {
             status @ (StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) => {
                 Err(GarminError::SessionRejected(status))
@@ -250,7 +253,7 @@ impl HealthProvider for GarminConnect {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::fs;
     use std::io;
     use std::time::Duration;
@@ -263,8 +266,8 @@ mod tests {
     use crate::test_server::{Reply, TestServer};
     use crate::{Endpoints, GarminConnect, GarminError, TokenFile, Tokens};
 
-    const DI_TOKEN: &str = include_str!("../fixtures/di_token.json");
-    const PROFILE: &str = include_str!("../fixtures/social_profile.json");
+    pub(crate) const DI_TOKEN: &str = include_str!("../fixtures/di_token.json");
+    pub(crate) const PROFILE: &str = include_str!("../fixtures/social_profile.json");
     const SUMMARY: &str = include_str!("../fixtures/user_summary.json");
     const SLEEP: &str = include_str!("../fixtures/daily_sleep.json");
 
@@ -276,7 +279,10 @@ mod tests {
         }
     }
 
-    async fn connect(replies: Vec<Reply>, dir: &TempDir) -> (GarminConnect, TestServer, TokenFile) {
+    pub(crate) async fn connect(
+        replies: Vec<Reply>,
+        dir: &TempDir,
+    ) -> (GarminConnect, TestServer, TokenFile) {
         connect_paced(replies, dir, &NO_GAP).await
     }
 
