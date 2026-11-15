@@ -120,15 +120,33 @@ update in stages:
    code. Run it in a terminal, once. Never script it or repeat it after a
    failure: repeated logins can lock the account for 48 hours. If Garmin
    answers 403, 427 or 429, wait before trying again.
-4. Without a token file the collector stays up and logs a failed session at
-   each pull. When the log reports a failed session later, the refresh token
-   has expired or was revoked: repeat step 3.
-5. After the first completed pull the collector imports the past year once,
-   over about 7 hours at about 2 requests per minute
+4. When Garmin refuses the session, or there is no token file, the
+   collector stays up and `alerter` sends one ntfy notification, "Garmin login
+   expired", with the three commands of step 3. The refresh token has expired
+   or was revoked: repeat step 3. The alerter repeats the notification every
+   12 hours while the login is broken and sends "Garmin login works again"
+   after the next successful pull. Throttling and network or Garmin outages do
+   not send it ([ADR-0024](docs/adr/0024-garmin-login-alert-and-gap-fill.md)).
+5. After a completed pull the collector first fetches the days of the last 30
+   that no daily pull fetched, so a broken login leaves no hole. It uses the
+   same pace as the import below, and `garmin_gap.json` on the token volume
+   records what is left. Deleting that file re-fetches the last 30 days. A
+   corrupt file is logged and the gap fill is skipped until you remove it.
+6. After the gap fill the collector imports the past year once, over about
+   7 hours at about 2 requests per minute
    ([ADR-0023](docs/adr/0023-health-backfill.md)). Progress is in
    `garmin_backfill.json` on the token volume. Deleting that file restarts
    the import; days already stored are not duplicated. A corrupt file is
    logged and the import is skipped until you remove it.
+
+When you update an install that already collects health data, update the
+consumers first: run `docker compose pull`, then
+`docker compose up -d store alerter dashboard`, then
+`docker compose up -d health-collector`. An older `store` rejects the session
+status the collector now publishes. Once the alerter has saved a Garmin login
+alert, an older alerter cannot read its state file and starts fresh, so
+rolling it back can resend first notifications, and an older dashboard shows
+"Alerts unavailable".
 
 ### Adding temperature ranges to an existing install
 
