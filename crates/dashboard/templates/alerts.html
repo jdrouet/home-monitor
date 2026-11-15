@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="60">
+<title>Alerts</title>
+</head>
+<body>
+<h1>Alerts</h1>
+<p><a href="/">Overview</a> <a href="/history">History</a></p>
+{% macro kind(k) %}{% match k %}{% when AlertKind::Offline %}offline{% when AlertKind::TooHot %}too hot{% when AlertKind::TooCold %}too cold{% endmatch %}{% endmacro %}
+{% if let Some(summary) = summary %}
+<section>
+<h2>Active</h2>
+{% for line in summary.active %}
+<p>{{ line.subject }}: {% call kind(line.kind) %}{% endcall %}{% if let Some(celsius) = line.celsius %}, {{ "{:.1}"|format(celsius) }} °C at last notification{% endif %}, since {{ self.time(line.since) }}</p>
+{% else %}
+<p>No active alerts.</p>
+{% endfor %}
+</section>
+<section>
+<h2>Resolved in the last 30 days</h2>
+{% for line in summary.resolved %}
+<p>{{ line.subject }}: {% call kind(line.kind) %}{% endcall %}, from {{ self.time(line.started) }} to {{ self.time(line.ended) }}</p>
+{% else %}
+<p>No alerts resolved in the last 30 days.</p>
+{% endfor %}
+</section>
+{% else %}
+<p>Alerts unavailable</p>
+{% endif %}
+</body>
+</html>
