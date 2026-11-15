@@ -138,6 +138,25 @@ update in stages:
    `garmin_backfill.json` on the token volume. Deleting that file restarts
    the import; days already stored are not duplicated. A corrupt file is
    logged and the import is skipped until you remove it.
+7. After the import the collector keeps Garmin's original data in the
+   `garmin-archive` volume (`/archive/garmin` in the container): every
+   workout with its original file, and the documents of each completed day of
+   the past year, with a random 3 to 6 s gap between requests. The history
+   takes 2 to 3 days of windows, then about 72 requests a day
+   ([ADR-0025](docs/adr/0025-garmin-raw-archive.md)). Progress is in
+   `garmin_archive.json` (days) and `garmin_activities.json` (activities) on
+   the token volume. Deleting one re-runs that import; files already stored
+   are skipped. A `.denied` file marks a document Garmin refused with a 403;
+   delete it to fetch the document again. A corrupt cursor file is logged and
+   that import is skipped until you remove it. Without the volume the archive
+   stops and logs; nothing is written to the container.
+
+To add the archive to an existing install, run `git pull` first (it adds the
+volume), then
+`docker compose pull health-collector && docker compose up -d health-collector`.
+Only `health-collector` changes and it publishes no new metrics. Set
+`archive_dir` in `config.toml` only after the new image runs: older images
+reject the key.
 
 When you update an install that already collects health data, update the
 consumers first: run `docker compose pull`, then

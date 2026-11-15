@@ -27,6 +27,7 @@ const DI_CLIENT_IDS: [&str; 4] = [
     "GARMIN_CONNECT_MOBILE_ANDROID_DI",
     "GARMIN_CONNECT_MOBILE_IOS_DI",
 ];
+const SSO_REDIRECTS: u8 = 5;
 const HTML_ACCEPT: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
 const JSON_ACCEPT: &str = "application/json, text/plain, */*";
 const EXCHANGE_ACCEPT: &str = "application/json,text/html;q=0.9,*/*;q=0.8";
@@ -42,7 +43,6 @@ impl GarminConnect {
     ) -> Result<(), GarminError> {
         let mut jar = CookieJar::default();
         self.load_sign_in_page(&mut jar).await?;
-        self.pause().await;
         let credentials = json!({
             "username": email,
             "password": password,
@@ -77,14 +77,28 @@ impl GarminConnect {
     }
 
     async fn load_sign_in_page(&self, jar: &mut CookieJar) -> Result<(), GarminError> {
+        let sso = self.endpoints.sso.origin();
+        let mut after_sso = false;
         let response = self
-            .http
-            .get(self.sign_in_url())
-            .headers(browser_headers(HTML_ACCEPT))
-            .send()
-            .await
-            .map_err(GarminError::request)?;
-        jar.store(response.headers());
+            .get_following(
+                self.sign_in_url(),
+                SSO_REDIRECTS,
+                |request, url, previous| {
+                    if let (true, Some(headers)) = (after_sso, previous) {
+                        jar.store(headers);
+                    }
+                    after_sso = url.origin() == sso;
+                    let request = request.headers(browser_headers(HTML_ACCEPT));
+                    match jar.header() {
+                        Some(cookie) if after_sso => request.header(COOKIE, cookie),
+                        _ => request,
+                    }
+                },
+            )
+            .await?;
+        if response.url().origin() == sso {
+            jar.store(response.headers());
+        }
         let status = response.status();
         check_not_blocked(status)?;
         if status.is_success() {
@@ -119,6 +133,7 @@ impl GarminConnect {
         if let Some(cookie) = jar.header() {
             request = request.header(COOKIE, cookie);
         }
+        self.pacer.wait().await;
         let response = request.send().await.map_err(GarminError::request)?;
         jar.store(response.headers());
         check_not_blocked(response.status())?;
@@ -133,7 +148,6 @@ impl GarminConnect {
         mfa_code: impl FnOnce() -> io::Result<String>,
     ) -> Result<String, GarminError> {
         let code = mfa_code().map_err(GarminError::Prompt)?;
-        self.pause().await;
         let body = json!({
             "mfaMethod": method,
             "mfaVerificationCode": code,
@@ -155,7 +169,7 @@ impl GarminConnect {
     /// Trades the service ticket for DI tokens, trying each client id in turn.
     async fn exchange(&self, ticket: &str) -> Result<Tokens, GarminError> {
         for client_id in DI_CLIENT_IDS {
-            self.pause().await;
+            self.pacer.wait().await;
             let response = self
                 .http
                 .post(self.endpoints.token.clone())
@@ -204,11 +218,11 @@ fn check_not_blocked(status: StatusCode) -> Result<(), GarminError> {
 mod tests {
     use std::cell::Cell;
     use std::io;
-    use std::time::Duration;
 
     use tempfile::TempDir;
     use use_cases::HealthProvider;
 
+    use crate::pacer::NO_GAP;
     use crate::test_server::{Reply, TestServer};
     use crate::{Endpoints, GarminConnect, GarminError, TokenFile};
 
@@ -254,7 +268,7 @@ mod tests {
         };
         let file = TokenFile::new(dir.path().join("garmin_tokens.json"));
         let connect =
-            GarminConnect::with_endpoints(file.clone(), endpoints, Duration::ZERO).expect("client");
+            GarminConnect::with_endpoints(file.clone(), endpoints, &NO_GAP).expect("client");
         let result = connect.login("jane@example.test", PASSWORD, mfa_code).await;
         (result, server, file, dir)
     }
@@ -319,6 +333,51 @@ mod tests {
         );
         assert!(exchange.has_header("authorization: Basic "));
         assert!(requests[3].has_header("authorization: Bearer new-access-token"));
+    }
+
+    #[tokio::test]
+    async fn a_redirecting_sign_in_page_is_followed_with_its_cookies() {
+        let replies = vec![
+            Reply::redirect("/mobile/sso/en_US/sign-in/next").with_cookie("session=abc; Path=/"),
+            Reply::new(200, "<html></html>").with_cookie("extra=1"),
+            Reply::new(200, SUCCESS),
+            Reply::new(200, DI_TOKEN),
+            Reply::new(200, PROFILE),
+        ];
+        let run = run(replies).await;
+        run.result.as_ref().expect("login succeeds");
+        let requests = run.server.requests();
+        assert_eq!(requests.len(), 5);
+        assert!(!requests[0].has_header("cookie:"));
+        assert_eq!(
+            requests[1].request_line(),
+            "GET /mobile/sso/en_US/sign-in/next HTTP/1.1"
+        );
+        assert!(requests[1].has_header("cookie: session=abc"));
+        assert!(requests[2].has_header("cookie: extra=1; session=abc"));
+    }
+
+    #[tokio::test]
+    async fn a_redirect_off_the_sso_host_gets_no_cookies_and_sets_none() {
+        let elsewhere = TestServer::start(vec![
+            Reply::new(200, "<html></html>").with_cookie("foreign=1"),
+        ])
+        .await;
+        let landing = format!("{}landing", elsewhere.base);
+        let replies = vec![
+            Reply::redirect(&landing).with_cookie("session=abc; Path=/"),
+            Reply::new(200, SUCCESS),
+            Reply::new(200, DI_TOKEN),
+            Reply::new(200, PROFILE),
+        ];
+        let run = run(replies).await;
+        run.result.as_ref().expect("login succeeds");
+        let requests = elsewhere.requests();
+        assert_eq!(requests.len(), 1);
+        assert!(!requests[0].has_header("cookie:"));
+        let login = &run.server.requests()[1];
+        assert!(login.has_header("cookie: session=abc"));
+        assert!(!login.has_header("foreign=1"));
     }
 
     #[tokio::test]

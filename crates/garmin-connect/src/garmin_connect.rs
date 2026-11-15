@@ -2,57 +2,105 @@ use std::io;
 use std::time::Duration;
 
 use chrono::NaiveDate;
-use reqwest::header::{ACCEPT, CACHE_CONTROL};
-use reqwest::{Client, StatusCode, Url};
+use reqwest::header::{ACCEPT, CACHE_CONTROL, HeaderMap, LOCATION};
+use reqwest::redirect::Policy;
+use reqwest::{Client, RequestBuilder, Response, StatusCode, Url};
 use serde::de::DeserializeOwned;
 use tokio::task::spawn_blocking;
-use tokio::time::sleep;
 use use_cases::{DailyHealth, HealthProvider};
 
 use crate::daily_sleep::DailySleep;
 use crate::daily_summary::DailySummary;
 use crate::endpoints::build_url;
 use crate::native_headers::native_headers;
+use crate::pacer::Pacer;
 use crate::read_json::read_json;
 use crate::social_profile::SocialProfile;
 use crate::token_response::TokenResponse;
-use crate::{Endpoints, GarminError, GarminSession, TokenFile, Tokens};
+use crate::{Endpoints, GarminError, GarminSession, JSON, TokenFile, Tokens};
 
-const PAUSE: Duration = Duration::from_secs(3);
 const TIMEOUT: Duration = Duration::from_secs(30);
+const API_REDIRECTS: u8 = 3;
+
+/// Every request of the process, redirect hops included, waits on this pacer.
+static PACER: Pacer = Pacer::new(Duration::from_secs(3)..=Duration::from_secs(6));
 
 /// Garmin Connect's unofficial API, reached with the tokens in a token file.
 pub struct GarminConnect {
     pub(crate) http: Client,
     pub(crate) endpoints: Endpoints,
     pub(crate) token_file: TokenFile,
-    pub(crate) pause: Duration,
+    pub(crate) pacer: &'static Pacer,
 }
 
 impl GarminConnect {
     pub fn new(token_file: TokenFile) -> Result<Self, GarminError> {
-        Self::with_endpoints(token_file, Endpoints::garmin(), PAUSE)
+        Self::with_endpoints(token_file, Endpoints::garmin(), &PACER)
     }
 
     pub(crate) fn with_endpoints(
         token_file: TokenFile,
         endpoints: Endpoints,
-        pause: Duration,
+        pacer: &'static Pacer,
     ) -> Result<Self, GarminError> {
         let http = Client::builder()
             .timeout(TIMEOUT)
+            .redirect(Policy::none())
             .build()
             .map_err(GarminError::request)?;
         Ok(Self {
             http,
             endpoints,
             token_file,
-            pause,
+            pacer,
         })
     }
 
-    pub(crate) async fn pause(&self) {
-        sleep(self.pause).await;
+    /// GETs `first`, following up to `max_hops` redirects by hand so that each
+    /// hop waits on the pacer. `prepare` shapes every request; it gets the
+    /// previous hop's headers, `None` on the first request. A redirect past
+    /// the limit is returned as is.
+    pub(crate) async fn get_following(
+        &self,
+        first: Url,
+        max_hops: u8,
+        mut prepare: impl FnMut(RequestBuilder, &Url, Option<&HeaderMap>) -> RequestBuilder,
+    ) -> Result<Response, GarminError> {
+        let mut url = first;
+        let mut previous: Option<HeaderMap> = None;
+        let mut hops = 0;
+        loop {
+            self.pacer.wait().await;
+            let request = prepare(self.http.get(url.clone()), &url, previous.as_ref());
+            let response = request.send().await.map_err(GarminError::request)?;
+            match redirect_target(&response, &url) {
+                Some(next) if hops < max_hops => {
+                    previous = Some(response.headers().clone());
+                    url = next;
+                    hops += 1;
+                }
+                _ => return Ok(response),
+            }
+        }
+    }
+
+    /// GETs `url` as the signed-in user. The token goes only to the API host.
+    pub(crate) async fn send_get(
+        &self,
+        token: &str,
+        url: Url,
+        accept: &'static str,
+    ) -> Result<Response, GarminError> {
+        let api = self.endpoints.api.origin();
+        self.get_following(url, API_REDIRECTS, |request, url, _| {
+            let request = request.headers(native_headers()).header(ACCEPT, accept);
+            if url.origin() == api {
+                request.bearer_auth(token)
+            } else {
+                request
+            }
+        })
+        .await
     }
 
     /// Refreshes the stored tokens and saves the result before any other call.
@@ -72,12 +120,13 @@ impl GarminConnect {
     }
 
     async fn refresh(&self, stored: &Tokens) -> Result<Tokens, GarminError> {
+        self.pacer.wait().await;
         let response = self
             .http
             .post(self.endpoints.token.clone())
             .headers(native_headers())
             .basic_auth(&stored.di_client_id, Some(""))
-            .header(ACCEPT, "application/json")
+            .header(ACCEPT, JSON)
             .header(CACHE_CONTROL, "no-cache")
             .form(&[
                 ("grant_type", "refresh_token"),
@@ -103,15 +152,7 @@ impl GarminConnect {
         url: Url,
         endpoint: &'static str,
     ) -> Result<T, GarminError> {
-        let response = self
-            .http
-            .get(url)
-            .headers(native_headers())
-            .header(ACCEPT, "application/json")
-            .bearer_auth(token)
-            .send()
-            .await
-            .map_err(GarminError::request)?;
+        let response = self.send_get(token, url, JSON).await?;
         match response.status() {
             status @ (StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) => {
                 Err(GarminError::SessionRejected(status))
@@ -130,6 +171,15 @@ impl GarminConnect {
         let profile: SocialProfile = self.fetch(&tokens.di_token, url, "social profile").await?;
         profile.display_name()
     }
+}
+
+/// Where a redirect response points, resolved against the URL it answered.
+fn redirect_target(response: &Response, from: &Url) -> Option<Url> {
+    if !response.status().is_redirection() {
+        return None;
+    }
+    let location = response.headers().get(LOCATION)?.to_str().ok()?;
+    from.join(location).ok()
 }
 
 /// Runs token file I/O, which blocks, off the async runtime.
@@ -172,9 +222,7 @@ impl HealthProvider for GarminConnect {
             &["wellness-service", "wellness", "dailySleepData", name],
             &[("date", &day), ("nonSleepBufferMinutes", "60")],
         );
-        self.pause().await;
         let summary: DailySummary = self.fetch(token, summary_url, "daily summary").await?;
-        self.pause().await;
         let sleep: DailySleep = self.fetch(token, sleep_url, "daily sleep").await?;
         Ok(DailyHealth {
             sleep_seconds: sleep.seconds(),
@@ -205,7 +253,7 @@ impl HealthProvider for GarminConnect {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::fs;
     use std::io;
     use std::time::Duration;
@@ -214,11 +262,12 @@ mod tests {
     use tempfile::TempDir;
     use use_cases::HealthProvider;
 
+    use crate::pacer::{NO_GAP, Pacer};
     use crate::test_server::{Reply, TestServer};
     use crate::{Endpoints, GarminConnect, GarminError, TokenFile, Tokens};
 
-    const DI_TOKEN: &str = include_str!("../fixtures/di_token.json");
-    const PROFILE: &str = include_str!("../fixtures/social_profile.json");
+    pub(crate) const DI_TOKEN: &str = include_str!("../fixtures/di_token.json");
+    pub(crate) const PROFILE: &str = include_str!("../fixtures/social_profile.json");
     const SUMMARY: &str = include_str!("../fixtures/user_summary.json");
     const SLEEP: &str = include_str!("../fixtures/daily_sleep.json");
 
@@ -230,7 +279,18 @@ mod tests {
         }
     }
 
-    async fn connect(replies: Vec<Reply>, dir: &TempDir) -> (GarminConnect, TestServer, TokenFile) {
+    pub(crate) async fn connect(
+        replies: Vec<Reply>,
+        dir: &TempDir,
+    ) -> (GarminConnect, TestServer, TokenFile) {
+        connect_paced(replies, dir, &NO_GAP).await
+    }
+
+    async fn connect_paced(
+        replies: Vec<Reply>,
+        dir: &TempDir,
+        pacer: &'static Pacer,
+    ) -> (GarminConnect, TestServer, TokenFile) {
         let server = TestServer::start(replies).await;
         let endpoints = Endpoints {
             sso: server.base.clone(),
@@ -243,7 +303,7 @@ mod tests {
         let file = TokenFile::new(dir.path().join("garmin_tokens.json"));
         file.save(&stored()).expect("seed tokens");
         let connect =
-            GarminConnect::with_endpoints(file.clone(), endpoints, Duration::ZERO).expect("client");
+            GarminConnect::with_endpoints(file.clone(), endpoints, pacer).expect("client");
         (connect, server, file)
     }
 
@@ -522,6 +582,58 @@ mod tests {
         ] {
             assert!(!rendered.contains(secret), "{secret} leaked");
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_redirect_is_followed_by_hand_and_each_hop_is_paced() {
+        static ONE_SECOND: Pacer = Pacer::new(Duration::from_secs(1)..=Duration::from_secs(1));
+        let dir = TempDir::new().expect("tempdir");
+        let replies = vec![
+            Reply::new(200, DI_TOKEN),
+            Reply::redirect("/moved/profile"),
+            Reply::new(200, PROFILE),
+        ];
+        let (connect, server, _) = connect_paced(replies, &dir, &ONE_SECOND).await;
+        let start = tokio::time::Instant::now();
+        let session = connect.open().await.expect("session");
+        assert_eq!(session.display_name, "Jane Doe");
+        assert!(start.elapsed() >= Duration::from_secs(2));
+        let requests = server.requests();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[2].request_line(), "GET /moved/profile HTTP/1.1");
+        assert!(requests[2].has_header("authorization: Bearer new-access-token"));
+    }
+
+    #[tokio::test]
+    async fn a_redirect_to_another_host_does_not_carry_the_token() {
+        let dir = TempDir::new().expect("tempdir");
+        let elsewhere = TestServer::start(vec![Reply::new(200, PROFILE)]).await;
+        let target = format!("{}elsewhere", elsewhere.base);
+        let replies = vec![Reply::new(200, DI_TOKEN), Reply::redirect(&target)];
+        let (connect, _server, _) = connect(replies, &dir).await;
+        let session = connect.open().await.expect("session");
+        assert_eq!(session.display_name, "Jane Doe");
+        let requests = elsewhere.requests();
+        assert_eq!(requests.len(), 1);
+        assert!(!requests[0].has_header("authorization"));
+    }
+
+    #[tokio::test]
+    async fn more_than_three_redirects_end_as_a_status_error() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut replies = vec![Reply::new(200, DI_TOKEN)];
+        replies.extend((0..5).map(|_| Reply::redirect("/again")));
+        let (connect, server, _) = connect(replies, &dir).await;
+        let error = connect.open().await.expect_err("too many redirects");
+        assert!(matches!(error, GarminError::Status(status) if status.as_u16() == 302));
+        assert_eq!(server.requests().len(), 5);
+    }
+
+    #[test]
+    fn every_client_shares_the_process_wide_pacer() {
+        let dir = TempDir::new().expect("tempdir");
+        let new = || GarminConnect::new(TokenFile::new(dir.path().join("t.json"))).expect("client");
+        assert!(std::ptr::eq(new().pacer, new().pacer));
     }
 
     #[tokio::test]

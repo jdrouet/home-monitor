@@ -1,6 +1,6 @@
 # ADR-0008: Garmin collector never logs in by itself
 
-Status: accepted (amended by ADR-0022, ADR-0023 and ADR-0024)
+Status: accepted (amended by ADR-0022, ADR-0023, ADR-0024 and ADR-0025)
 
 ## Context
 Garmin Connect has no personal API. The unofficial SSO login is fragile and

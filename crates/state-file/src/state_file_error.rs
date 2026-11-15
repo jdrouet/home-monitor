@@ -19,6 +19,8 @@ pub enum StateFileError {
     UnsupportedVersion { path: PathBuf, version: u32 },
     #[error("{} holds a cursor with dates out of range", path.display())]
     InvalidCursor { path: PathBuf },
+    #[error("the archive directory {} is not available", path.display())]
+    ArchiveUnavailable { path: PathBuf },
     #[error("cannot write {}", path.display())]
     Write {
         path: PathBuf,

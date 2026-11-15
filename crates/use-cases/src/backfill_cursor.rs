@@ -37,12 +37,7 @@ impl BackfillCursor {
         let yesterday = today - Days::new(1);
         let final_day = today - Days::new(2);
         let floor = today - Days::new(GAP_DAYS + 1);
-        let newest_final = fetched
-            .iter()
-            .copied()
-            .filter(|day| *day < today)
-            .max()
-            .unwrap_or(final_day);
+        let newest_final = newest_final(today, fetched);
         let owes_yesterday =
             requested.iter().any(|day| day.date == yesterday) && !fetched.contains(&yesterday);
         let start = previous.map_or(floor, |cursor| cursor.next.max(floor));
@@ -60,6 +55,17 @@ impl BackfillCursor {
         Self { next, last }
     }
 
+    /// The days to archive, after a completed pull on `today` that fetched
+    /// `fetched`. The range starts a year back and rolls on: it keeps its
+    /// start and its end moves to the newest final day.
+    pub fn rolling(previous: Option<Self>, today: NaiveDate, fetched: &[NaiveDate]) -> Self {
+        let newest_final = newest_final(today, fetched);
+        Self {
+            next: previous.map_or(today - Days::new(365), |cursor| cursor.next),
+            last: previous.map_or(newest_final, |cursor| cursor.last.max(newest_final)),
+        }
+    }
+
     pub fn is_done(&self) -> bool {
         self.next > self.last
     }
@@ -71,6 +77,17 @@ impl BackfillCursor {
             ..self
         }
     }
+}
+
+/// The newest day that is final after a pull on `today`: the newest fetched
+/// day before today, else the day before yesterday.
+fn newest_final(today: NaiveDate, fetched: &[NaiveDate]) -> NaiveDate {
+    fetched
+        .iter()
+        .copied()
+        .filter(|day| *day < today)
+        .max()
+        .unwrap_or(today - Days::new(2))
 }
 
 #[cfg(test)]
@@ -208,6 +225,36 @@ mod tests {
         assert_eq!(owed(Some(cursor(1, 2))), cursor(1, 1));
         assert_eq!(owed(Some(cursor(0, 1))), cursor(1, 1));
         assert_eq!(owed(None), cursor(31, 1));
+    }
+
+    #[test]
+    fn the_first_rolling_range_starts_a_year_back_at_the_newest_final_day() {
+        assert_eq!(
+            BackfillCursor::rolling(None, today(), &[day(1), day(0)]),
+            cursor(365, 1)
+        );
+        assert_eq!(
+            BackfillCursor::rolling(None, today(), &[day(0)]),
+            cursor(365, 2)
+        );
+        assert_eq!(BackfillCursor::rolling(None, today(), &[]), cursor(365, 2));
+    }
+
+    #[test]
+    fn a_rolling_range_keeps_its_start_and_only_moves_its_end_forward() {
+        let fetched = [day(1), day(0)];
+        assert_eq!(
+            BackfillCursor::rolling(Some(cursor(100, 2)), today(), &fetched),
+            cursor(100, 1)
+        );
+        assert_eq!(
+            BackfillCursor::rolling(Some(cursor(100, 1)), today(), &[day(0)]),
+            cursor(100, 1)
+        );
+        assert_eq!(
+            BackfillCursor::rolling(Some(cursor(0, 1)), today(), &fetched),
+            cursor(0, 1)
+        );
     }
 
     #[test]

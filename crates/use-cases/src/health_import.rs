@@ -3,21 +3,25 @@ use domain::Timestamp;
 
 use crate::health_backfill::RunEnd;
 use crate::{
-    BackfillCursor, BackfillStore, HealthBackfill, HealthDay, HealthProvider, HealthPull, Publisher,
+    ActivityCursorStore, ActivityImport, ArchiveDays, ArchiveSource, BackfillCursor, BackfillStore,
+    HealthBackfill, HealthDay, HealthPull, Publisher, RawArchive,
 };
 
-/// What runs after a completed pull: the gap fill of the days the daily pulls
-/// missed, then the yearly backfill, in the same window.
-pub struct HealthImport<'a, H, P, G, B> {
-    pub gap: HealthBackfill<'a, H, P, G>,
-    pub yearly: HealthBackfill<'a, H, P, B>,
+/// What runs after a completed pull, in the same window: the gap fill of the
+/// days the daily pulls missed, the yearly backfill, the activities, then the
+/// days of Garmin's original documents.
+pub struct HealthImport<'a, H, P, A, S, C> {
+    pub gap: HealthBackfill<'a, H, P, S>,
+    pub yearly: HealthBackfill<'a, H, P, S>,
+    pub activities: ActivityImport<'a, H, A, C>,
+    pub archive_days: ArchiveDays<'a, H, A, S>,
 }
 
-impl<H: HealthProvider, P: Publisher, G: BackfillStore, B: BackfillStore>
-    HealthImport<'_, H, P, G, B>
+impl<H: ArchiveSource, P: Publisher, A: RawArchive, S: BackfillStore, C: ActivityCursorStore>
+    HealthImport<'_, H, P, A, S, C>
 {
-    /// Does nothing unless `pull` completed. The yearly backfill is skipped
-    /// when the gap fill stopped on an error, which would stop it too.
+    /// Does nothing unless `pull` completed. A run that stopped on an error
+    /// ends the chain: the runs after it would stop on the same error.
     pub async fn after_pull(
         &self,
         pull: &HealthPull,
@@ -42,12 +46,26 @@ impl<H: HealthProvider, P: Publisher, G: BackfillStore, B: BackfillStore>
         if end == RunEnd::Stopped {
             return;
         }
-        self.yearly
+        let end = self
+            .yearly
             .run(
                 |stored| stored.unwrap_or_else(|| BackfillCursor::anchored_at(today)),
                 until,
                 &clock,
                 &day_stamp,
+            )
+            .await;
+        if end == RunEnd::Stopped {
+            return;
+        }
+        if self.activities.run(until, &clock).await == RunEnd::Stopped {
+            return;
+        }
+        self.archive_days
+            .run(
+                |stored| BackfillCursor::rolling(stored, today, fetched),
+                until,
+                &clock,
             )
             .await;
     }
@@ -56,59 +74,16 @@ impl<H: HealthProvider, P: Publisher, G: BackfillStore, B: BackfillStore>
 #[cfg(test)]
 mod tests {
     use std::io;
-    use std::sync::Mutex;
 
     use chrono::{Days, NaiveDate};
     use domain::{Measurement, SourceId, SourceKind, Timestamp};
-    use tokio::time::Instant;
 
-    use crate::{
-        BackfillCursor, BackfillStore, DailyHealth, HealthBackfill, HealthDay, HealthImport,
-        HealthProvider, HealthPull, Publisher,
+    use crate::test_archive::{
+        MemoryArchive, MemoryBackfill, MemoryCursor, START, ScriptedSource, clock,
     };
-
-    #[derive(Debug)]
-    struct TestError;
-
-    impl std::fmt::Display for TestError {
-        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("test error")
-        }
-    }
-
-    impl std::error::Error for TestError {}
-
-    #[derive(Default)]
-    struct TestProvider {
-        open_fails: bool,
-        opens: Mutex<usize>,
-    }
-
-    impl HealthProvider for TestProvider {
-        type Session = ();
-        type Error = TestError;
-
-        async fn open(&self) -> Result<(), TestError> {
-            *self.opens.lock().expect("lock") += 1;
-            if self.open_fails {
-                Err(TestError)
-            } else {
-                Ok(())
-            }
-        }
-
-        async fn daily(&self, _session: &(), _date: NaiveDate) -> Result<DailyHealth, TestError> {
-            Ok(DailyHealth::default())
-        }
-
-        fn is_session_error(_error: &TestError) -> bool {
-            true
-        }
-
-        fn is_throttled(_error: &TestError) -> bool {
-            false
-        }
-    }
+    use crate::{
+        ActivityImport, ArchiveDays, HealthBackfill, HealthDay, HealthImport, HealthPull, Publisher,
+    };
 
     struct TestPublisher;
 
@@ -126,28 +101,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct TestStore(Mutex<Option<BackfillCursor>>);
-
-    impl TestStore {
-        fn stored(&self) -> Option<BackfillCursor> {
-            *self.0.lock().expect("lock")
-        }
+    struct Stores {
+        gap: MemoryBackfill,
+        yearly: MemoryBackfill,
+        archive: MemoryBackfill,
+        activities: MemoryCursor,
     }
-
-    impl BackfillStore for TestStore {
-        type Error = io::Error;
-
-        fn load(&self) -> Result<Option<BackfillCursor>, io::Error> {
-            Ok(self.stored())
-        }
-
-        fn save(&self, cursor: &BackfillCursor) -> Result<(), io::Error> {
-            *self.0.lock().expect("lock") = Some(*cursor);
-            Ok(())
-        }
-    }
-
-    const START: i64 = 1_000_000_000_000_000;
 
     fn today() -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 11, 15).expect("valid date")
@@ -162,30 +121,35 @@ mod tests {
     }
 
     async fn after_pull(
-        provider: &TestProvider,
-        gap: &TestStore,
-        yearly: &TestStore,
+        source: &ScriptedSource,
+        archive: &MemoryArchive,
+        stores: &Stores,
         pull: HealthPull,
     ) {
         let source_id = SourceId::from("garmin".to_owned());
         let import = HealthImport {
             gap: HealthBackfill {
-                provider,
+                provider: source,
                 publisher: &TestPublisher,
-                store: gap,
+                store: &stores.gap,
                 source_id: &source_id,
             },
             yearly: HealthBackfill {
-                provider,
+                provider: source,
                 publisher: &TestPublisher,
-                store: yearly,
+                store: &stores.yearly,
                 source_id: &source_id,
             },
-        };
-        let start = Instant::now();
-        let clock = move || {
-            let elapsed = i64::try_from(start.elapsed().as_micros()).expect("fits");
-            Timestamp::from_micros(START + elapsed)
+            activities: ActivityImport {
+                source,
+                archive,
+                store: &stores.activities,
+            },
+            archive_days: ArchiveDays {
+                source,
+                archive,
+                store: &stores.archive,
+            },
         };
         let requested = [HealthDay {
             date: yesterday(),
@@ -193,7 +157,7 @@ mod tests {
         }];
         let until = Timestamp::from_micros(START + 86_400_000_000);
         import
-            .after_pull(&pull, &requested, today(), until, clock, stamp)
+            .after_pull(&pull, &requested, today(), until, clock(), stamp)
             .await;
     }
 
@@ -204,12 +168,20 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_completed_pull_runs_the_gap_fill_then_the_yearly_backfill() {
-        let provider = TestProvider::default();
-        let (gap, yearly) = (TestStore::default(), TestStore::default());
-        after_pull(&provider, &gap, &yearly, completed()).await;
-        assert!(gap.stored().expect("gap cursor").is_done());
-        assert!(yearly.stored().expect("yearly cursor").is_done());
+    async fn a_completed_pull_runs_the_gap_fill_the_yearly_backfill_then_the_archive() {
+        let (source, archive, stores) = (
+            ScriptedSource::default(),
+            MemoryArchive::default(),
+            Stores::default(),
+        );
+        after_pull(&source, &archive, &stores, completed()).await;
+        assert!(stores.gap.stored().expect("gap cursor").is_done());
+        assert!(stores.yearly.stored().expect("yearly cursor").is_done());
+        let rolled = stores.archive.stored().expect("archive cursor");
+        assert!(rolled.is_done());
+        assert_eq!(rolled.last, yesterday());
+        assert!(stores.activities.stored().expect("activity cursor").done);
+        assert_eq!(archive.count(), 365 * 2);
     }
 
     #[tokio::test(start_paused = true)]
@@ -219,25 +191,62 @@ mod tests {
             HealthPull::Throttled,
             HealthPull::Failed,
         ] {
-            let provider = TestProvider::default();
-            let (gap, yearly) = (TestStore::default(), TestStore::default());
-            after_pull(&provider, &gap, &yearly, pull).await;
-            assert_eq!(*provider.opens.lock().expect("lock"), 0);
-            assert_eq!(gap.stored(), None);
-            assert_eq!(yearly.stored(), None);
+            let (source, archive, stores) = (
+                ScriptedSource::default(),
+                MemoryArchive::default(),
+                Stores::default(),
+            );
+            after_pull(&source, &archive, &stores, pull).await;
+            assert_eq!(source.opens(), 0);
+            assert_eq!(stores.gap.stored(), None);
+            assert_eq!(stores.yearly.stored(), None);
+            assert_eq!(stores.archive.stored(), None);
+            assert_eq!(stores.activities.stored(), None);
         }
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_stopped_gap_fill_skips_the_yearly_backfill() {
-        let provider = TestProvider {
+    async fn a_stopped_gap_fill_skips_the_yearly_backfill_and_the_archive() {
+        let source = ScriptedSource {
             open_fails: true,
-            ..TestProvider::default()
+            ..ScriptedSource::default()
         };
-        let (gap, yearly) = (TestStore::default(), TestStore::default());
-        after_pull(&provider, &gap, &yearly, completed()).await;
-        assert!(gap.stored().is_some());
-        assert_eq!(yearly.stored(), None);
-        assert_eq!(*provider.opens.lock().expect("lock"), 1);
+        let (archive, stores) = (MemoryArchive::default(), Stores::default());
+        after_pull(&source, &archive, &stores, completed()).await;
+        assert!(stores.gap.stored().is_some());
+        assert_eq!(stores.yearly.stored(), None);
+        assert_eq!(stores.archive.stored(), None);
+        assert_eq!(stores.activities.stored(), None);
+        assert_eq!(source.opens(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stopped_activity_import_skips_the_archive_days() {
+        let source = ScriptedSource {
+            list_fails: true,
+            ..ScriptedSource::default()
+        };
+        let (archive, stores) = (MemoryArchive::default(), Stores::default());
+        after_pull(&source, &archive, &stores, completed()).await;
+        assert!(stores.yearly.stored().expect("yearly cursor").is_done());
+        assert!(!stores.activities.stored().expect("activity cursor").done);
+        assert_eq!(stores.archive.stored(), None);
+        assert!(source.requested().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failing_archive_leaves_the_metrics_runs_complete() {
+        let source = ScriptedSource::default();
+        let archive = MemoryArchive {
+            put_fails: true,
+            ..MemoryArchive::default()
+        };
+        let stores = Stores::default();
+        after_pull(&source, &archive, &stores, completed()).await;
+        assert!(stores.gap.stored().expect("gap cursor").is_done());
+        assert!(stores.yearly.stored().expect("yearly cursor").is_done());
+        let rolled = stores.archive.stored().expect("archive cursor");
+        assert!(!rolled.is_done());
+        assert_eq!(archive.count(), 0);
     }
 }

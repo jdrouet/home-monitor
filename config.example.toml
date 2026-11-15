@@ -27,6 +27,7 @@ longitude = 2.3522
 [health_collector]
 # Garmin tokens come from `health-collector login`.
 http_listen = "0.0.0.0:8080"
+# archive_dir = "/archive/garmin"
 
 # Thermometers are matched by Bluetooth MAC address.
 [[thermometers]]

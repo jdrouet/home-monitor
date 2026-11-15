@@ -19,6 +19,10 @@ shows a dashboard; sends alerts.
   behind a port; Open-Meteo is the first adapter.
 - **Health provider**: an external service for personal health data. Garmin
   Connect (unofficial API) is the first adapter.
+- **Garmin archive**: Garmin's original documents, kept as received in a
+  directory of files: per completed day of the past year and per workout
+  (including its original file). Empty files mean Garmin has no data; a
+  `.denied` file means Garmin refused the document (ADR-0025).
 - **Alert**: a notification sent when a rule's condition holds (plant needs
   water, temperature too high or too low, sensor offline). Delivered through
   ntfy. Lifecycle: fires on onset, reminds every 12 h while active, sends a
