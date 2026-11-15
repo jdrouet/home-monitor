@@ -191,6 +191,14 @@ impl HealthProvider for GarminConnect {
             GarminError::Refresh(_) | GarminError::SessionRejected(_)
         )
     }
+
+    fn is_throttled(error: &GarminError) -> bool {
+        matches!(
+            error,
+            GarminError::Status(status) | GarminError::Refresh(status)
+                if matches!(status.as_u16(), 427 | 429)
+        )
+    }
 }
 
 #[cfg(test)]
@@ -405,6 +413,54 @@ mod tests {
         assert!(matches!(garbage, GarminError::InvalidResponse { .. }));
         assert!(!GarminConnect::is_session_error(&status));
         assert!(!GarminConnect::is_session_error(&garbage));
+        assert!(!GarminConnect::is_throttled(&status));
+        assert!(!GarminConnect::is_throttled(&garbage));
+    }
+
+    #[tokio::test]
+    async fn a_rejected_session_is_not_throttling() {
+        let dir = TempDir::new().expect("tempdir");
+        let replies = vec![
+            Reply::new(200, DI_TOKEN),
+            Reply::new(200, PROFILE),
+            Reply::status(403),
+        ];
+        let (connect, _server, _file) = connect(replies, &dir).await;
+        let session = connect.open().await.expect("session");
+        let error = connect.daily(&session, date()).await.expect_err("refused");
+        assert!(!GarminConnect::is_throttled(&error));
+    }
+
+    #[tokio::test]
+    async fn throttling_on_a_daily_endpoint_is_throttled_but_not_a_session_error() {
+        for status in [427, 429] {
+            for sleep_call in [false, true] {
+                let dir = TempDir::new().expect("tempdir");
+                let mut replies = vec![Reply::new(200, DI_TOKEN), Reply::new(200, PROFILE)];
+                if sleep_call {
+                    replies.push(Reply::new(200, SUMMARY));
+                }
+                replies.push(Reply::status(status));
+                let (connect, _server, _file) = connect(replies, &dir).await;
+                let session = connect.open().await.expect("session");
+                let error = connect
+                    .daily(&session, date())
+                    .await
+                    .expect_err("throttled");
+                assert!(matches!(error, GarminError::Status(_)));
+                assert!(GarminConnect::is_throttled(&error));
+                assert!(!GarminConnect::is_session_error(&error));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn throttling_on_refresh_is_throttled_and_a_session_error() {
+        let dir = TempDir::new().expect("tempdir");
+        let (connect, _server, _file) = connect(vec![Reply::status(427)], &dir).await;
+        let error = connect.open().await.expect_err("throttled");
+        assert!(GarminConnect::is_throttled(&error));
+        assert!(GarminConnect::is_session_error(&error));
     }
 
     #[tokio::test]

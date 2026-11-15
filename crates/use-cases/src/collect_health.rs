@@ -8,10 +8,13 @@ use crate::{HealthDay, HealthProvider, Publisher};
 pub enum HealthPull {
     Completed,
     SessionFailed,
+    /// Garmin asked the client to slow down during a daily fetch.
+    Throttled,
 }
 
 /// Pulls each of `days` through one session and publishes the measurements.
-/// A failed day is logged and skipped; a failed session ends the pull.
+/// A failed day is logged and skipped; a failed session or a throttled fetch
+/// ends the pull.
 pub async fn collect_health<H: HealthProvider, P: Publisher>(
     provider: &H,
     publisher: &P,
@@ -31,6 +34,10 @@ pub async fn collect_health<H: HealthProvider, P: Publisher>(
             Err(error) if H::is_session_error(&error) => {
                 error!(%error, "health session rejected, skipping this pull");
                 return HealthPull::SessionFailed;
+            }
+            Err(error) if H::is_throttled(&error) => {
+                warn!(%error, "health fetch throttled, ending this pull");
+                return HealthPull::Throttled;
             }
             Err(error) => {
                 warn!(%error, date = %day.date, "health fetch failed, skipping this day");
@@ -69,6 +76,7 @@ mod tests {
     enum TestError {
         Session,
         Day,
+        Throttled,
     }
 
     impl fmt::Display for TestError {
@@ -126,6 +134,10 @@ mod tests {
 
         fn is_session_error(error: &TestError) -> bool {
             matches!(error, TestError::Session)
+        }
+
+        fn is_throttled(error: &TestError) -> bool {
+            matches!(error, TestError::Throttled)
         }
     }
 
@@ -227,6 +239,22 @@ mod tests {
         let publisher = TestPublisher::default();
         let outcome = run(&provider, &publisher, &[day(1), day(2)]).await;
         assert_eq!(outcome, HealthPull::SessionFailed);
+        assert_eq!(*provider.fetched.lock().expect("lock"), [date(1)]);
+        assert!(stamps(&publisher).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_throttled_day_ends_the_pull_without_fetching_later_days() {
+        let provider = TestProvider {
+            results: HashMap::from([
+                (date(1), Err(TestError::Throttled)),
+                (date(2), Ok(steps(7))),
+            ]),
+            ..TestProvider::default()
+        };
+        let publisher = TestPublisher::default();
+        let outcome = run(&provider, &publisher, &[day(1), day(2)]).await;
+        assert_eq!(outcome, HealthPull::Throttled);
         assert_eq!(*provider.fetched.lock().expect("lock"), [date(1)]);
         assert!(stamps(&publisher).is_empty());
     }
