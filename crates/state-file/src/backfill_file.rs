@@ -1,6 +1,7 @@
+use std::ops::RangeInclusive;
 use std::path::PathBuf;
 
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
 use use_cases::{BackfillCursor, BackfillStore};
 
@@ -9,6 +10,8 @@ use crate::read_if_present::read_if_present;
 use crate::write_atomic::write_atomic;
 
 const VERSION: u32 = 1;
+/// Years whose days all have Europe/Paris stamps that fit a timestamp.
+const YEARS: RangeInclusive<i32> = 1970..=9998;
 
 #[derive(Serialize, Deserialize)]
 struct Wire {
@@ -49,6 +52,14 @@ impl BackfillStore for BackfillFile {
             return Err(StateFileError::UnsupportedVersion {
                 path: self.path.clone(),
                 version: wire.version,
+            });
+        }
+        if ![wire.next, wire.last]
+            .iter()
+            .all(|date| YEARS.contains(&date.year()))
+        {
+            return Err(StateFileError::InvalidCursor {
+                path: self.path.clone(),
             });
         }
         Ok(Some(BackfillCursor {
@@ -122,6 +133,27 @@ mod tests {
             file_in(&dir).load(),
             Err(StateFileError::UnsupportedVersion { version: 2, .. })
         ));
+    }
+
+    #[test]
+    fn years_outside_1970_to_9998_are_rejected_and_the_edges_load() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("garmin_backfill.json");
+        for (next, last, loads) in [
+            ("1970-01-01", "9998-12-31", true),
+            ("1969-12-31", "2026-01-01", false),
+            ("2026-01-01", "9999-01-01", false),
+            ("+262142-12-31", "+262142-12-31", false),
+        ] {
+            let json = format!(r#"{{"version":1,"next":"{next}","last":"{last}"}}"#);
+            fs::write(&path, json).expect("write");
+            let outcome = file_in(&dir).load();
+            if loads {
+                assert!(outcome.expect("load").is_some());
+            } else {
+                assert!(matches!(outcome, Err(StateFileError::InvalidCursor { .. })));
+            }
+        }
     }
 
     #[test]
