@@ -1,7 +1,20 @@
+mod daily_sleep;
+mod daily_summary;
+mod endpoints;
+mod garmin_connect;
 mod garmin_error;
+mod garmin_session;
+mod native_headers;
+mod social_profile;
+#[cfg(test)]
+mod test_server;
 mod token_file;
+mod token_response;
 mod tokens;
 
+pub use endpoints::Endpoints;
+pub use garmin_connect::GarminConnect;
 pub use garmin_error::GarminError;
+pub use garmin_session::GarminSession;
 pub use token_file::{TokenFile, TokenLock};
 pub use tokens::Tokens;

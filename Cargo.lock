@@ -1682,10 +1682,14 @@ dependencies = [
 name = "garmin-connect"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
+ "tokio",
+ "use-cases",
 ]
 
 [[package]]
@@ -2797,6 +2801,9 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
