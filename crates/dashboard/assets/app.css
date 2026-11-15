@@ -224,6 +224,25 @@ main > section + section { margin-top: var(--space-5); }
 }
 .card--stale .metric-value, .card--stale .secondary { color: var(--text-muted); }
 
+.table-wrap {
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.table-wrap table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.table-wrap th, .table-wrap td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+.table-wrap tbody tr:last-child > * { border-bottom: 0; }
+.table-wrap thead th { background: var(--sunken); color: var(--text-muted); font-weight: 600; }
+.table-wrap tbody th { background: var(--surface); font-weight: 400; font-variant-numeric: tabular-nums; }
+.table-wrap th:first-child { position: sticky; left: 0; }
+.table-wrap td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
 .history-form { display: grid; gap: var(--space-4); }
 .history-form fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .history-form legend {

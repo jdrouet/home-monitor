@@ -16,8 +16,7 @@ use std::sync::Arc;
 use alerter_client::AlerterClient;
 use axum::Router;
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::routing::get;
 use config::Config;
 use domain::{Measurement, SeriesQuery, Thermometer, Timestamp};
@@ -119,13 +118,12 @@ async fn alerts(State(state): State<Arc<AppState>>) -> Response {
 
 async fn health(State(state): State<Arc<AppState>>) -> Response {
     let days = health_days(Timestamp::now(), HEALTH_DAYS);
-    match health_measurements(&state.store, &days).await {
-        Ok(measurements) => health_page::render(&build_health(&days, &measurements)),
-        Err(error) => {
-            error!(%error, "cannot read the health series from the store");
-            (StatusCode::BAD_GATEWAY, "store unavailable").into_response()
-        }
-    }
+    let rows = health_measurements(&state.store, &days)
+        .await
+        .inspect_err(|error| error!(%error, "cannot read the health series from the store"))
+        .ok()
+        .map(|measurements| build_health(&days, &measurements));
+    health_page::render(rows.as_deref())
 }
 
 /// One store query per health metric over all of `days`, run in turn.
@@ -239,5 +237,10 @@ mod tests {
         });
         let response = health(State(state)).await;
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body reads");
+        let html = String::from_utf8(bytes.to_vec()).expect("utf-8 body");
+        assert!(html.contains("Health data unavailable"));
     }
 }

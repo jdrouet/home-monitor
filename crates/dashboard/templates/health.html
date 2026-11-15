@@ -1,13 +1,25 @@
 {% extends "base.html" %}
+{% macro cell(value) %}{% if let Some(value) = value %}<td class="num">{{ value }}</td>{% else %}<td class="num"><span aria-hidden="true">—</span><span class="visually-hidden">no data</span></td>{% endif %}{% endmacro %}
 {% block content %}
+{% if let Some(rows) = rows %}
+{% if self.has_data() %}
+<div class="table-wrap" role="region" tabindex="0" aria-labelledby="health-caption">
 <table>
+<caption id="health-caption" class="visually-hidden">Daily health, last 30 days</caption>
 <thead>
-<tr><th>Date</th><th>Sleep</th><th>Sleep score</th><th>Resting HR (bpm)</th><th>Steps</th><th>Body Battery max</th><th>Body Battery min</th></tr>
+<tr><th scope="col">Date</th><th scope="col">Sleep</th><th scope="col">Sleep score</th><th scope="col">Resting HR (bpm)</th><th scope="col">Steps</th><th scope="col">Body Battery max</th><th scope="col">Body Battery min</th></tr>
 </thead>
 <tbody>
 {% for row in rows %}
-<tr><td>{{ row.date }}</td><td>{{ self.duration(row.sleep_seconds) }}</td><td>{{ self.number(row.sleep_score) }}</td><td>{{ self.number(row.resting_heart_rate) }}</td><td>{{ self.number(row.steps) }}</td><td>{{ self.number(row.body_battery_max) }}</td><td>{{ self.number(row.body_battery_min) }}</td></tr>
+<tr><th scope="row">{{ row.date }}</th>{% call cell(self.duration(row.sleep_seconds)) %}{% endcall %}{% call cell(self.number(row.sleep_score)) %}{% endcall %}{% call cell(self.number(row.resting_heart_rate)) %}{% endcall %}{% call cell(self.number(row.steps)) %}{% endcall %}{% call cell(self.number(row.body_battery_max)) %}{% endcall %}{% call cell(self.number(row.body_battery_min)) %}{% endcall %}</tr>
 {% endfor %}
 </tbody>
 </table>
+</div>
+{% else %}
+<p class="notice"><strong>No health data in the last 30 days.</strong> Check that the health collector is running.</p>
+{% endif %}
+{% else %}
+<p class="notice notice--warn"><span class="badge badge--warn">Unavailable</span> <strong>Health data unavailable.</strong> The store did not respond. This page retries every 5 minutes.</p>
+{% endif %}
 {% endblock %}
