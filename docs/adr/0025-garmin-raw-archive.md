@@ -106,7 +106,7 @@ ADR-0024 runs the gap fill before the yearly backfill.
 - Deleting a cursor re-runs that import; stored files are skipped. Activity
   edits after archiving are not re-fetched.
 - Residual risk: deleting more than one page (5) of already traversed
-  activities during an interrupted history walk can shift unseen activities
+  activities during an interrupted history walk or catch-up can shift unseen activities
   below the resume offset, and they would be missed. Deleting
   `garmin_activities.json` re-walks everything.
 
