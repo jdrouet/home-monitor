@@ -7,11 +7,18 @@ pub const ACTIVITY_PAGE: u32 = 5;
 /// `start` is the offset after the last page processed. Once `done`, each run
 /// catches up with new activities from the top of the list, and `catch_up`
 /// holds the offset reached when such a run was cut short.
+///
+/// A pass ends at a known activity, not at an offset, because new activities
+/// shift every offset. `pending` is the newest activity when the pass began.
+/// When the pass ends, it becomes `boundary`: that activity and everything
+/// older is archived, and the next catch-up stops on the page holding it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActivityCursor {
     pub start: u32,
     pub done: bool,
     pub catch_up: Option<u32>,
+    pub boundary: Option<u64>,
+    pub pending: Option<u64>,
 }
 
 impl ActivityCursor {
@@ -20,6 +27,8 @@ impl ActivityCursor {
             start: 0,
             done: false,
             catch_up: None,
+            boundary: None,
+            pending: None,
         }
     }
 
@@ -38,29 +47,48 @@ impl ActivityCursor {
         }
     }
 
-    /// After the history page fetched at `offset` with `len` activities. A
-    /// short page is the end of the list.
-    pub const fn after_history_page(self, offset: u32, len: u32) -> Self {
+    /// Notes the newest activity at the start of a pass.
+    #[must_use]
+    pub const fn with_pending(self, id: u64) -> Self {
         Self {
-            start: offset + len,
-            done: len < ACTIVITY_PAGE,
-            catch_up: None,
+            pending: Some(id),
+            ..self
         }
     }
 
-    /// After the catch-up page fetched at `offset` with `len` activities. A
-    /// short page ends the catch-up, and so does a page with nothing new on
-    /// it once the offset reached before an interruption is passed: the page
-    /// before that one is an overlap that is always stored.
-    pub const fn after_catch_up_page(self, offset: u32, len: u32, all_stored: bool) -> Self {
-        let past_checkpoint = match self.catch_up {
-            Some(reached) => offset >= reached,
-            None => true,
-        };
-        let finished = len < ACTIVITY_PAGE || (all_stored && past_checkpoint);
+    /// After the history page fetched at `offset` with `len` activities. A
+    /// short page is the end of the list and of the pass.
+    pub const fn after_history_page(self, offset: u32, len: u32) -> Self {
+        let finished = len < ACTIVITY_PAGE;
+        Self {
+            start: offset + len,
+            done: finished,
+            catch_up: None,
+            ..self.settled(finished)
+        }
+    }
+
+    /// After the catch-up page fetched at `offset` with `len` activities.
+    /// `reached` tells that the page holds the boundary. A short page or one
+    /// holding the boundary ends the pass; with no boundary yet only a short
+    /// page does.
+    pub const fn after_catch_up_page(self, offset: u32, len: u32, reached: bool) -> Self {
+        let finished = len < ACTIVITY_PAGE || reached;
         Self {
             catch_up: if finished { None } else { Some(offset + len) },
-            ..self
+            ..self.settled(finished)
+        }
+    }
+
+    /// The end of a pass makes its starting point the boundary.
+    const fn settled(self, finished: bool) -> Self {
+        match (finished, self.pending) {
+            (true, Some(id)) => Self {
+                boundary: Some(id),
+                pending: None,
+                ..self
+            },
+            _ => self,
         }
     }
 }
@@ -68,6 +96,14 @@ impl ActivityCursor {
 #[cfg(test)]
 mod tests {
     use super::{ACTIVITY_PAGE, ActivityCursor};
+
+    fn caught_up() -> ActivityCursor {
+        ActivityCursor {
+            start: 40,
+            done: true,
+            ..ActivityCursor::fresh()
+        }
+    }
 
     #[test]
     fn a_fresh_cursor_starts_the_history_at_the_top() {
@@ -110,12 +146,26 @@ mod tests {
     }
 
     #[test]
-    fn a_catch_up_cut_short_resumes_one_page_early() {
-        let done = ActivityCursor {
-            start: 40,
-            done: true,
-            catch_up: None,
+    fn the_history_makes_its_starting_point_the_boundary_only_when_it_ends() {
+        let walking = ActivityCursor::fresh().with_pending(7);
+        let middle = walking.after_history_page(0, ACTIVITY_PAGE);
+        assert_eq!((middle.boundary, middle.pending), (None, Some(7)));
+        let end = middle.after_history_page(5, 2);
+        assert_eq!((end.boundary, end.pending), (Some(7), None));
+    }
+
+    #[test]
+    fn an_empty_list_leaves_the_boundary_as_it_was() {
+        let cursor = ActivityCursor {
+            boundary: Some(3),
+            ..caught_up()
         };
+        assert_eq!(cursor.after_catch_up_page(0, 0, false).boundary, Some(3));
+    }
+
+    #[test]
+    fn a_catch_up_cut_short_resumes_one_page_early() {
+        let done = caught_up().with_pending(9);
         assert_eq!(done.catch_up_start(), 0);
         let cut = done.after_catch_up_page(0, ACTIVITY_PAGE, false);
         assert_eq!(cut.catch_up, Some(5));
@@ -124,36 +174,44 @@ mod tests {
         assert_eq!(cut.catch_up, Some(10));
         assert_eq!(cut.catch_up_start(), 5);
         assert_eq!((cut.start, cut.done), (40, true));
+        assert_eq!((cut.boundary, cut.pending), (None, Some(9)));
     }
 
     #[test]
-    fn a_stored_overlap_page_does_not_end_an_interrupted_catch_up() {
+    fn a_page_holding_the_boundary_ends_the_catch_up_and_moves_the_boundary() {
         let cut = ActivityCursor {
-            start: 40,
-            done: true,
             catch_up: Some(10),
+            boundary: Some(3),
+            pending: Some(9),
+            ..caught_up()
         };
-        let overlap = cut.after_catch_up_page(5, ACTIVITY_PAGE, true);
-        assert_eq!(overlap.catch_up, Some(10));
-        let next = overlap.after_catch_up_page(10, ACTIVITY_PAGE, false);
-        assert_eq!(next.catch_up, Some(15));
-        assert_eq!(
-            next.after_catch_up_page(15, ACTIVITY_PAGE, true).catch_up,
-            None
-        );
+        let end = cut.after_catch_up_page(5, ACTIVITY_PAGE, true);
+        assert_eq!(end.catch_up, None);
+        assert_eq!((end.boundary, end.pending), (Some(9), None));
     }
 
     #[test]
-    fn a_catch_up_ends_on_a_stored_or_short_page() {
+    fn a_short_page_ends_the_catch_up_even_without_a_boundary() {
         let cut = ActivityCursor {
-            start: 40,
-            done: true,
             catch_up: Some(10),
+            pending: Some(9),
+            ..caught_up()
         };
-        assert_eq!(
-            cut.after_catch_up_page(10, ACTIVITY_PAGE, true).catch_up,
-            None
-        );
-        assert_eq!(cut.after_catch_up_page(5, 2, false).catch_up, None);
+        let end = cut.after_catch_up_page(10, 2, false);
+        assert_eq!(end.catch_up, None);
+        assert_eq!((end.boundary, end.pending), (Some(9), None));
+    }
+
+    #[test]
+    fn a_full_page_without_the_boundary_does_not_end_the_catch_up() {
+        let cut = ActivityCursor {
+            catch_up: Some(10),
+            boundary: Some(3),
+            pending: Some(9),
+            ..caught_up()
+        };
+        let next = cut.after_catch_up_page(5, ACTIVITY_PAGE, false);
+        assert_eq!(next.catch_up, Some(10));
+        assert_eq!((next.boundary, next.pending), (Some(3), Some(9)));
     }
 }

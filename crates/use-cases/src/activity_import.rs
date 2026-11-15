@@ -20,14 +20,16 @@ pub struct ActivityImport<'a, H, A, C> {
     pub store: &'a C,
 }
 
-/// What happened to one page of the activity list.
-enum Page {
-    /// Every document of the page is archived, `fetched` of them new.
-    Complete {
-        len: u32,
-        fetched: usize,
-    },
-    /// The session is due for replacement; the page is to be redone.
+/// A page whose documents are all archived.
+struct Done {
+    len: u32,
+    /// The page holds the cursor's boundary activity.
+    reached: bool,
+}
+
+/// Why a step did not complete.
+enum Stop {
+    /// The session is due for replacement; the step is to be redone.
     Retry,
     End(RunEnd),
 }
@@ -64,10 +66,18 @@ impl<H: ArchiveSource, A: RawArchive, C: ActivityCursorStore> ActivityImport<'_,
             if !turn(until, clock).await {
                 return RunEnd::OutOfTime;
             }
-            let len = match self.page(&open, offset, until, clock).await {
-                Page::Complete { len, .. } => len,
-                Page::Retry => continue,
-                Page::End(end) => return end,
+            cursor = match self.begin(&open, cursor, until, clock).await {
+                Ok(begun) => begun,
+                Err(Stop::Retry) => continue,
+                Err(Stop::End(end)) => return end,
+            };
+            let len = match self
+                .page(&open, offset, cursor.boundary, until, clock)
+                .await
+            {
+                Ok(done) => done.len,
+                Err(Stop::Retry) => continue,
+                Err(Stop::End(end)) => return end,
             };
             let next = cursor.after_history_page(offset, len);
             if !self.save(&next) {
@@ -98,12 +108,20 @@ impl<H: ArchiveSource, A: RawArchive, C: ActivityCursorStore> ActivityImport<'_,
             if !turn(until, clock).await {
                 return RunEnd::OutOfTime;
             }
-            let (len, fetched) = match self.page(&open, offset, until, clock).await {
-                Page::Complete { len, fetched } => (len, fetched),
-                Page::Retry => continue,
-                Page::End(end) => return end,
+            cursor = match self.begin(&open, cursor, until, clock).await {
+                Ok(begun) => begun,
+                Err(Stop::Retry) => continue,
+                Err(Stop::End(end)) => return end,
             };
-            let next = cursor.after_catch_up_page(offset, len, fetched == 0);
+            let done = match self
+                .page(&open, offset, cursor.boundary, until, clock)
+                .await
+            {
+                Ok(done) => done,
+                Err(Stop::Retry) => continue,
+                Err(Stop::End(end)) => return end,
+            };
+            let next = cursor.after_catch_up_page(offset, done.len, done.reached);
             if next != cursor && !self.save(&next) {
                 return RunEnd::Stopped;
             }
@@ -111,11 +129,42 @@ impl<H: ArchiveSource, A: RawArchive, C: ActivityCursorStore> ActivityImport<'_,
             if cursor.catch_up.is_none() {
                 return RunEnd::Done;
             }
-            offset += len;
+            offset += done.len;
             opened = Some(open);
             pages += 1;
         }
         RunEnd::OutOfTime
+    }
+
+    /// Notes the newest activity as the start of this pass and saves it before
+    /// anything is archived. An empty list has nothing to note.
+    async fn begin(
+        &self,
+        open: &Opened<H::Session>,
+        cursor: ActivityCursor,
+        until: Timestamp,
+        clock: &impl Fn() -> Timestamp,
+    ) -> Result<ActivityCursor, Stop> {
+        if cursor.pending.is_some() {
+            return Ok(cursor);
+        }
+        check(open, until, clock)?;
+        let newest = match self.source.activities(&open.session, 0, 1).await {
+            Ok(refs) => refs.first().map(|activity| activity.id.0),
+            Err(error) => {
+                warn!(%error, "cannot list activities, stopping");
+                return Err(Stop::End(RunEnd::Stopped));
+            }
+        };
+        let Some(id) = newest else {
+            return Ok(cursor);
+        };
+        let begun = cursor.with_pending(id);
+        if self.save(&begun) {
+            Ok(begun)
+        } else {
+            Err(Stop::End(RunEnd::Stopped))
+        }
     }
 
     /// Reads the page of the list at `offset` and archives what is missing of
@@ -124,14 +173,11 @@ impl<H: ArchiveSource, A: RawArchive, C: ActivityCursorStore> ActivityImport<'_,
         &self,
         open: &Opened<H::Session>,
         offset: u32,
+        boundary: Option<u64>,
         until: Timestamp,
         clock: &impl Fn() -> Timestamp,
-    ) -> Page {
-        match fits(until, open.at, clock) {
-            Fit::Yes => {}
-            Fit::Deadline => return Page::End(RunEnd::OutOfTime),
-            Fit::SessionAge => return Page::Retry,
-        }
+    ) -> Result<Done, Stop> {
+        check(open, until, clock)?;
         let refs = match self
             .source
             .activities(&open.session, offset, ACTIVITY_PAGE)
@@ -140,7 +186,7 @@ impl<H: ArchiveSource, A: RawArchive, C: ActivityCursorStore> ActivityImport<'_,
             Ok(refs) => refs,
             Err(error) => {
                 warn!(%error, offset, "cannot list activities, stopping");
-                return Page::End(RunEnd::Stopped);
+                return Err(Stop::End(RunEnd::Stopped));
             }
         };
         let items: Vec<_> = refs
@@ -155,12 +201,14 @@ impl<H: ArchiveSource, A: RawArchive, C: ActivityCursorStore> ActivityImport<'_,
                 })
             })
             .collect();
-        let len = u32::try_from(refs.len()).unwrap_or(ACTIVITY_PAGE);
         match keep_missing(self.source, self.archive, open, &items, until, clock).await {
-            Kept::Complete { fetched } => Page::Complete { len, fetched },
-            Kept::Deadline => Page::End(RunEnd::OutOfTime),
-            Kept::SessionAge => Page::Retry,
-            Kept::Stopped => Page::End(RunEnd::Stopped),
+            Kept::Complete { .. } => Ok(Done {
+                len: u32::try_from(refs.len()).unwrap_or(ACTIVITY_PAGE),
+                reached: boundary.is_some_and(|id| refs.iter().any(|activity| activity.id.0 == id)),
+            }),
+            Kept::Deadline => Err(Stop::End(RunEnd::OutOfTime)),
+            Kept::SessionAge => Err(Stop::Retry),
+            Kept::Stopped => Err(Stop::End(RunEnd::Stopped)),
         }
     }
 
@@ -189,6 +237,19 @@ impl<H: ArchiveSource, A: RawArchive, C: ActivityCursorStore> ActivityImport<'_,
                 false
             }
         }
+    }
+}
+
+/// Whether a request may start now in the session.
+fn check<T>(
+    open: &Opened<T>,
+    until: Timestamp,
+    clock: &impl Fn() -> Timestamp,
+) -> Result<(), Stop> {
+    match fits(until, open.at, clock) {
+        Fit::Yes => Ok(()),
+        Fit::Deadline => Err(Stop::End(RunEnd::OutOfTime)),
+        Fit::SessionAge => Err(Stop::Retry),
     }
 }
 
@@ -262,6 +323,14 @@ mod tests {
             start: 500,
             done: true,
             catch_up,
+            ..ActivityCursor::fresh()
+        }
+    }
+
+    fn caught_up_to(boundary: u64) -> ActivityCursor {
+        ActivityCursor {
+            boundary: Some(boundary),
+            ..caught_up(None)
         }
     }
 
@@ -314,7 +383,7 @@ mod tests {
         let store = MemoryCursor::default();
         let (end, elapsed) = run_in(&source, &archive, &store, DAY).await;
         assert_eq!(end, RunEnd::Done);
-        assert_eq!(source.pages(), [(0, 5), (5, 5)]);
+        assert_eq!(source.pages(), [(0, 1), (0, 5), (5, 5)]);
         assert_eq!(elapsed, Duration::from_secs(180));
         assert!((0..7).all(|id| has(&archive, id)));
         assert_eq!(
@@ -322,7 +391,9 @@ mod tests {
             Some(ActivityCursor {
                 start: 7,
                 done: true,
-                catch_up: None
+                catch_up: None,
+                boundary: Some(0),
+                pending: None,
             })
         );
     }
@@ -341,9 +412,9 @@ mod tests {
         seed(&archive, 0..100);
         let store = MemoryCursor::holding(history(100));
         assert_eq!(run(&source, &archive, &store).await, RunEnd::Done);
-        assert_eq!(source.pages(), [(95, 5), (100, 5), (105, 5)]);
+        assert_eq!(source.pages(), [(0, 1), (95, 5), (100, 5), (105, 5)]);
         let starts: Vec<_> = store.saves().iter().map(|cursor| cursor.start).collect();
-        assert_eq!(starts, [100, 105, 105]);
+        assert_eq!(starts, [100, 100, 105, 105]);
         let fetched: Vec<_> = source.requested().iter().map(|(_, key)| *key).collect();
         assert!(
             fetched
@@ -363,25 +434,59 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn the_catch_up_stops_at_the_first_page_that_was_already_stored() {
+    async fn the_catch_up_stops_on_the_page_holding_the_boundary() {
         let (source, archive) = (source_with(0..12), MemoryArchive::default());
         seed(&archive, 2..12);
-        let store = MemoryCursor::holding(caught_up(None));
+        let store = MemoryCursor::holding(caught_up_to(7));
         assert_eq!(run(&source, &archive, &store).await, RunEnd::Done);
-        assert_eq!(source.pages(), [(0, 5), (5, 5)]);
+        assert_eq!(source.pages(), [(0, 1), (0, 5), (5, 5)]);
         let saved: Vec<_> = store.saves().iter().map(|cursor| cursor.catch_up).collect();
-        assert_eq!(saved, [Some(5), None]);
+        assert_eq!(saved, [None, Some(5), None]);
         assert!(has(&archive, 0) && has(&archive, 1));
+        let end = store.stored().expect("cursor");
+        assert_eq!((end.boundary, end.pending), (Some(0), None));
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_caught_up_archive_reads_one_page_and_saves_nothing() {
+    async fn new_activities_shifting_every_offset_do_not_end_a_resumed_catch_up_early() {
+        let ids = (100..105).chain(0..12).chain(999..1004);
+        let (source, archive) = (source_with(ids), MemoryArchive::default());
+        seed(&archive, (0..5).chain(999..1004));
+        let interrupted = ActivityCursor {
+            catch_up: Some(5),
+            boundary: Some(999),
+            pending: Some(0),
+            ..caught_up(None)
+        };
+        let store = MemoryCursor::holding(interrupted);
+        assert_eq!(run(&source, &archive, &store).await, RunEnd::Done);
+        assert_eq!(source.pages(), [(0, 5), (5, 5), (10, 5), (15, 5)]);
+        assert!((0..12).chain(100..105).all(|id| has(&archive, id)));
+        let end = store.stored().expect("cursor");
+        assert_eq!(
+            (end.boundary, end.pending, end.catch_up),
+            (Some(0), None, None)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_deleted_boundary_falls_back_to_walking_until_a_short_page() {
+        let (source, archive) = (source_with(0..12), MemoryArchive::default());
+        let store = MemoryCursor::holding(caught_up_to(9999));
+        assert_eq!(run(&source, &archive, &store).await, RunEnd::Done);
+        assert_eq!(source.pages(), [(0, 1), (0, 5), (5, 5), (10, 5)]);
+        assert!((0..12).all(|id| has(&archive, id)));
+        assert_eq!(store.stored().and_then(|cursor| cursor.boundary), Some(0));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_caught_up_archive_reads_one_page_and_fetches_nothing() {
         let (source, archive) = (source_with(0..12), MemoryArchive::default());
         seed(&archive, 0..12);
-        let store = MemoryCursor::holding(caught_up(None));
+        let store = MemoryCursor::holding(caught_up_to(3));
         assert_eq!(run(&source, &archive, &store).await, RunEnd::Done);
-        assert_eq!(source.pages(), [(0, 5)]);
-        assert!(store.saves().is_empty());
+        assert_eq!(source.pages(), [(0, 1), (0, 5)]);
+        assert_eq!(store.saves().len(), 2);
         assert!(source.requested().is_empty());
     }
 
@@ -391,7 +496,7 @@ mod tests {
         seed(&archive, 0..5);
         let store = MemoryCursor::holding(caught_up(Some(5)));
         assert_eq!(run(&source, &archive, &store).await, RunEnd::Done);
-        assert_eq!(source.pages(), [(0, 5), (5, 5)]);
+        assert_eq!(source.pages(), [(0, 1), (0, 5), (5, 5)]);
         assert!((0..8).all(|id| has(&archive, id)));
         assert_eq!(store.stored().map(|cursor| cursor.catch_up), Some(None));
     }
@@ -401,16 +506,17 @@ mod tests {
         let (source, archive) = (source_with(0..100), MemoryArchive::default());
         let store = MemoryCursor::holding(caught_up(None));
         assert_eq!(run(&source, &archive, &store).await, RunEnd::OutOfTime);
-        assert_eq!(source.pages().len(), 10);
+        assert_eq!(source.pages().len(), 11);
         assert_eq!(
             store.stored(),
             Some(ActivityCursor {
                 catch_up: Some(50),
+                pending: Some(0),
                 ..caught_up(None)
             })
         );
         assert_eq!(run(&source, &archive, &store).await, RunEnd::OutOfTime);
-        assert_eq!(source.pages()[10], (45, 5));
+        assert_eq!(source.pages()[11], (45, 5));
         assert_eq!(store.stored().and_then(|cursor| cursor.catch_up), Some(95));
     }
 
@@ -439,7 +545,8 @@ mod tests {
         for (source, archive) in &cases {
             let store = MemoryCursor::default();
             assert_eq!(run(source, archive, &store).await, RunEnd::Stopped);
-            assert_eq!(store.saves(), [ActivityCursor::fresh()]);
+            let stored = store.stored().expect("cursor");
+            assert_eq!((stored.start, stored.done), (0, false));
         }
     }
 
@@ -452,7 +559,7 @@ mod tests {
             ..store
         };
         assert_eq!(run(&source, &archive, &failing).await, RunEnd::Stopped);
-        assert_eq!(source.pages().len(), 1);
+        assert_eq!(source.pages(), [(0, 1)]);
     }
 
     #[tokio::test(start_paused = true)]
@@ -465,7 +572,8 @@ mod tests {
         let store = MemoryCursor::default();
         let (end, _) = run_in(&source, &archive, &store, Duration::from_secs(430)).await;
         assert_eq!(end, RunEnd::OutOfTime);
-        assert_eq!(store.saves(), [ActivityCursor::fresh()]);
+        let stored = store.stored().expect("cursor");
+        assert_eq!((stored.start, stored.done), (0, false));
         assert_eq!(archive.count(), 1);
     }
 
@@ -479,7 +587,7 @@ mod tests {
         assert_eq!(run(&source, &archive, &store).await, RunEnd::Done);
         assert_eq!(source.opens(), 2);
         assert!((0..2).all(|id| has(&archive, id)));
-        assert_eq!(source.pages(), [(0, 5), (0, 5)]);
+        assert_eq!(source.pages(), [(0, 1), (0, 5), (0, 5)]);
     }
 
     #[tokio::test(start_paused = true)]

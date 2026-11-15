@@ -10,8 +10,8 @@ use chrono::NaiveDate;
 use tokio::time::sleep;
 
 use crate::{
-    ACTIVITY_PAGE, ActivityCursor, ActivityCursorStore, ActivityRef, ArchiveKey, ArchiveSource,
-    DailyHealth, DocumentKey, Fetched, HealthProvider, RawArchive,
+    ActivityCursor, ActivityCursorStore, ActivityRef, ArchiveKey, ArchiveSource, DailyHealth,
+    DocumentKey, Fetched, HealthProvider, RawArchive,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,7 +118,6 @@ impl ArchiveSource for ScriptedSource {
         start: u32,
         limit: u32,
     ) -> Result<Vec<ActivityRef>, TestError> {
-        assert_eq!(limit, ACTIVITY_PAGE);
         self.pages.lock().expect("lock").push((start, limit));
         if self.list_fails {
             return Err(TestError::Other);

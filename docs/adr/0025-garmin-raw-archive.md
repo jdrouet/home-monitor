@@ -51,15 +51,22 @@ ADR-0024 runs the gap fill before the yearly backfill.
   document is present. The daily pull and the gap fill archive nothing and are
   unchanged.
 - Activities: `garmin_activities.json`
-  `{"version":1,"start":N,"done":bool,"catch_up":M|null}`. The history walks
-  the list newest first, 5 per step, and resumes one page early to absorb
-  deletions. After a page it saves `start` as the offset the page was read at
-  plus its length. Once `done`, each run catches up from the top: it resumes
-  one page before `catch_up` when set, saves `catch_up` after each complete
-  page, and ends when it reaches a page with nothing new at or past the saved
-  offset, or a short page, which clears `catch_up`. A run reads at most 10
-  pages; hitting the cap keeps `catch_up` so the next run continues, and the
-  run reports `OutOfTime`.
+  `{"version":1,"start":N,"done":bool,"catch_up":M|null,"boundary":ID|null,"pending":ID|null}`.
+  The history walks the list newest first, 5 per step, and resumes one page
+  early to absorb deletions. After a page it saves `start` as the offset the
+  page was read at plus its length. New activities shift every offset, so a
+  pass ends at a known activity, not at an offset. When a pass starts without
+  `pending`, one request reads the newest activity and saves its id as
+  `pending` before anything is archived. `boundary` is the newest activity
+  known to be archived together with everything older. Once `done`, each run
+  catches up from the top: it resumes one page before `catch_up` when set,
+  saves `catch_up` after each complete page, and ends after a complete page
+  that holds `boundary`, or a short page. Ending sets `boundary = pending`
+  and clears `pending` and `catch_up`; the history walk does the same at its
+  short page. With no `boundary` yet, or when that activity was deleted, the
+  catch-up walks until a short page. A run reads at most 10 pages; hitting the
+  cap keeps `catch_up` and `pending` so the next run continues, and the run
+  reports `OutOfTime`.
 - Order and isolation: after a completed pull: gap fill, yearly metrics,
   activities, archive days. A run that stopped ends the chain, including a
   stopped yearly run. Metrics runners never touch storage, so a storage
