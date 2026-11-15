@@ -147,5 +147,6 @@ mod tests {
         let html = page(&overview).await;
         assert!(html.contains(r#"href="/history""#));
         assert!(html.contains(r#"<a href="/alerts">Alerts</a>"#));
+        assert!(html.contains(r#"<a href="/health">Health</a>"#));
     }
 }

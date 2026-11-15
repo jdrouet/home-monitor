@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 bthome.workspace = true
+chrono.workspace = true
 domain.workspace = true
 tokio = { workspace = true, features = ["macros", "time"] }
 tracing.workspace = true

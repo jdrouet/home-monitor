@@ -1,0 +1,1 @@
+{"dailySleepDTO":{"userProfilePK":1,"calendarDate":"2026-07-14","sleepTimeSeconds":27120,"napTimeSeconds":0,"deepSleepSeconds":5400,"lightSleepSeconds":14400,"remSleepSeconds":6000,"awakeSleepSeconds":1320,"sleepStartTimestampGMT":1783987200000,"sleepEndTimestampGMT":1784014320000,"sleepScores":{"overall":{"value":81,"qualifierKey":"GOOD"}}}}

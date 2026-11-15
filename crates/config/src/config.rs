@@ -13,6 +13,7 @@ use crate::ConfigError;
 const PATH_ENV: &str = "HOME_MONITOR_CONFIG";
 const DEFAULT_PATH: &str = "config.toml";
 const DEFAULT_STATE_FILE: &str = "/data/alerts.json";
+const DEFAULT_TOKEN_FILE: &str = "/tokens/garmin_tokens.json";
 const DEFAULT_ALERTER_URL: &str = "http://alerter:8080";
 
 #[derive(Debug, Clone, Deserialize)]
@@ -24,6 +25,7 @@ pub struct Config {
     pub dashboard: DashboardConfig,
     pub alerter: AlerterConfig,
     pub weather_collector: Option<WeatherCollectorConfig>,
+    pub health_collector: Option<HealthCollectorConfig>,
     pub thermometers: Vec<Thermometer>,
 }
 
@@ -79,6 +81,18 @@ pub struct WeatherCollectorConfig {
     pub http_listen: SocketAddr,
     pub latitude: f64,
     pub longitude: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HealthCollectorConfig {
+    pub http_listen: SocketAddr,
+    #[serde(default = "default_token_file")]
+    pub token_file: PathBuf,
+}
+
+fn default_token_file() -> PathBuf {
+    PathBuf::from(DEFAULT_TOKEN_FILE)
 }
 
 impl WeatherCollectorConfig {
@@ -151,6 +165,8 @@ mod tests {
 
     const WEATHER_SECTION: &str = "[weather_collector]\nhttp_listen = \"0.0.0.0:8080\"\n# Outdoor weather location (Open-Meteo), in decimal degrees.\nlatitude = 48.8566\nlongitude = 2.3522\n\n";
 
+    const HEALTH_SECTION: &str = "[health_collector]\n# Garmin tokens come from `health-collector login`.\nhttp_listen = \"0.0.0.0:8080\"\n\n";
+
     fn example_without(section: &str) -> String {
         EXAMPLE.replace(section, "")
     }
@@ -194,6 +210,41 @@ mod tests {
         assert_eq!(weather.http_listen.port(), 8080);
         assert_eq!(weather.latitude, 48.8566);
         assert_eq!(weather.longitude, 2.3522);
+    }
+
+    #[test]
+    fn example_has_a_health_collector_with_the_default_token_file() {
+        let config: Config = EXAMPLE.parse().expect("example is valid");
+        let health = config.health_collector.expect("section is present");
+        assert_eq!(health.http_listen.port(), 8080);
+        assert_eq!(health.token_file, Path::new("/tokens/garmin_tokens.json"));
+    }
+
+    #[test]
+    fn token_file_can_be_set() {
+        let text = EXAMPLE.replace(
+            "[health_collector]\n",
+            "[health_collector]\ntoken_file = \"/var/garmin.json\"\n",
+        );
+        let config: Config = text.parse().expect("config is valid");
+        let health = config.health_collector.expect("section is present");
+        assert_eq!(health.token_file, Path::new("/var/garmin.json"));
+    }
+
+    #[test]
+    fn health_section_is_optional() {
+        let text = example_without(HEALTH_SECTION);
+        let config: Config = text.parse().expect("config is valid");
+        assert!(config.health_collector.is_none());
+    }
+
+    #[test]
+    fn unknown_health_key_is_rejected() {
+        let text = EXAMPLE.replace(
+            "[health_collector]\n",
+            "[health_collector]\nemail = \"a\"\n",
+        );
+        assert!(matches!(text.parse::<Config>(), Err(ConfigError::Parse(_))));
     }
 
     #[test]

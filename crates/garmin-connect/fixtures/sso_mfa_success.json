@@ -1,0 +1,1 @@
+{"serviceURL":"https://connect.garmin.com/app","serviceTicketId":"ST-MFATICKET-sso","responseStatus":{"type":"SUCCESSFUL","message":"","httpStatus":"OK"},"responseReason":null,"customerMfaInfo":null,"consentTypeList":null,"captchaAlreadyPassed":false,"samlResponse":null,"authType":"CAS"}

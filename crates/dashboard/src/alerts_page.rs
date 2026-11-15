@@ -120,6 +120,7 @@ mod tests {
         assert!(html.contains("Alerts unavailable"));
         assert!(html.contains(r#"href="/""#));
         assert!(html.contains(r#"href="/history""#));
+        assert!(html.contains(r#"<a href="/health">Health</a>"#));
         assert!(!html.contains("No active alerts."));
     }
 

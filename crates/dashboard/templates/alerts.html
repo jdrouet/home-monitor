@@ -8,7 +8,7 @@
 </head>
 <body>
 <h1>Alerts</h1>
-<p><a href="/">Overview</a> <a href="/history">History</a></p>
+<p><a href="/">Overview</a> <a href="/history">History</a> <a href="/health">Health</a></p>
 {% macro kind(k) %}{% match k %}{% when AlertKind::Offline %}offline{% when AlertKind::TooHot %}too hot{% when AlertKind::TooCold %}too cold{% endmatch %}{% endmacro %}
 {% if let Some(summary) = summary %}
 <section>

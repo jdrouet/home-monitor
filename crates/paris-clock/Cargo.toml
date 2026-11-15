@@ -1,0 +1,13 @@
+[package]
+name = "paris-clock"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono.workspace = true
+chrono-tz.workspace = true
+domain.workspace = true
+
+[lints]
+workspace = true

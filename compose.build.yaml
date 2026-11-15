@@ -9,3 +9,5 @@ services:
     build: { context: ., target: alerter }
   weather-collector:
     build: { context: ., target: weather-collector }
+  health-collector:
+    build: { context: ., target: health-collector }

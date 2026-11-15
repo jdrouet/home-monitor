@@ -802,6 +802,7 @@ dependencies = [
  "chrono-tz",
  "config",
  "domain",
+ "paris-clock",
  "reqwest",
  "thiserror",
  "tokio",
@@ -1678,6 +1679,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "garmin-connect"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "use-cases",
+]
+
+[[package]]
 name = "getrandom"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1758,6 +1773,24 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.2.0",
+]
+
+[[package]]
+name = "health-collector"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "config",
+ "domain",
+ "garmin-connect",
+ "mqtt",
+ "paris-clock",
+ "rpassword",
+ "tokio",
+ "tracing-subscriber",
+ "use-cases",
 ]
 
 [[package]]
@@ -2432,6 +2465,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 
 [[package]]
+name = "paris-clock"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "domain",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2777,6 +2819,9 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
@@ -2801,6 +2846,27 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rpassword"
+version = "7.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fa2c5d9304b618df61ff17f3d3485c6e1854a3d94902a49abbb8d43dfbe0464"
+dependencies = [
+ "libc",
+ "rtoolbox",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "rtoolbox"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a1efe12a1469752d0e6ff5ebec0b6ef4924cc5c4c71046b0ec730040535819d"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3602,6 +3668,7 @@ name = "use-cases"
 version = "0.1.0"
 dependencies = [
  "bthome",
+ "chrono",
  "domain",
  "tokio",
  "tracing",

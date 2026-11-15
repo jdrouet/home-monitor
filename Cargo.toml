@@ -13,11 +13,14 @@ axum = { version = "0.8", default-features = false, features = ["http1", "tokio"
 bluez = { path = "crates/bluez" }
 bthome = { path = "crates/bthome" }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono-tz = { version = "0.10", default-features = false }
 config = { path = "crates/config" }
 domain = { path = "crates/domain" }
+garmin-connect = { path = "crates/garmin-connect" }
 mqtt = { path = "crates/mqtt" }
 ntfy = { path = "crates/ntfy" }
 open-meteo = { path = "crates/open-meteo" }
+paris-clock = { path = "crates/paris-clock" }
 reqwest = { version = "0.13", default-features = false }
 rumqttc = { version = "0.25", default-features = false }
 serde = { version = "1", features = ["derive"] }

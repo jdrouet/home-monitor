@@ -3,15 +3,17 @@
 Reads Bluetooth temperature and humidity sensors and shows the climate of each
 room on a dashboard and charts past temperature and humidity per room, and sends a phone notification when a sensor stops
 reporting or a room gets too hot or too cold. It also shows the outdoor weather and today's forecast from
-Open-Meteo ([ADR-0018](docs/adr/0018-weather-collection.md)). It runs as seven
-containers: Mosquitto, ntfy, `ble-collector`, `store`, `dashboard`, `alerter`
-and `weather-collector`. The host needs BlueZ and D-Bus, because
+Open-Meteo ([ADR-0018](docs/adr/0018-weather-collection.md)). It can also pull
+daily sleep, resting heart rate, steps and Body Battery from Garmin Connect
+([ADR-0022](docs/adr/0022-health-collection.md)). It runs as eight
+containers: Mosquitto, ntfy, `ble-collector`, `store`, `dashboard`, `alerter`,
+`weather-collector` and `health-collector`. The host needs BlueZ and D-Bus, because
 `ble-collector` talks to the Bluetooth adapter through them.
 
 ## Images
 
 CI publishes `ghcr.io/jdrouet/home-monitor-ble-collector`,
-`-store`, `-dashboard`, `-alerter` and `-weather-collector` for `linux/amd64` and `linux/arm64`. Tags are
+`-store`, `-dashboard`, `-alerter`, `-weather-collector` and `-health-collector` for `linux/amd64` and `linux/arm64`. Tags are
 `latest` (head of main) and `sha-<7-char commit>`. See
 [ADR-0016](docs/adr/0016-multi-arch-images.md).
 
@@ -93,6 +95,34 @@ batches, so update in stages:
 2. Add `[weather_collector]` from `config.example.toml` to `config.toml`, with
    your latitude and longitude.
 3. Run `docker compose up -d --force-recreate` (or restart the services).
+
+### Adding the health collector to an existing install
+
+`health-collector` reads your Garmin Connect data through an unofficial API.
+Garmin's terms forbid unauthorized third-party access and Garmin blocks
+clients, so logins and pulls can stop working without notice. Older images
+reject the `[health_collector]` section and cannot decode health batches, so
+update in stages:
+
+1. Run `git pull`, then `docker compose pull && docker compose up -d`. This
+   adds the `garmin-tokens` volume. `health-collector` restarts until it is
+   configured.
+2. Add `[health_collector]` from `config.example.toml` to `config.toml`.
+3. Stop the collector so nothing else touches the tokens, then log in once:
+
+   ```sh
+   docker compose stop health-collector
+   docker compose run --rm health-collector login
+   docker compose up -d --force-recreate health-collector
+   ```
+
+   The login asks for your Garmin email, password and, if enabled, the MFA
+   code. Run it in a terminal, once. Never script it or repeat it after a
+   failure: repeated logins can lock the account for 48 hours. If Garmin
+   answers 403, 427 or 429, wait before trying again.
+4. Without a token file the collector stays up and logs a failed session at
+   each pull. When the log reports a failed session later, the refresh token
+   has expired or was revoked: repeat step 3.
 
 ### Adding temperature ranges to an existing install
 
