@@ -39,7 +39,8 @@ delivery and data embedding open.
 
 ## Consequences
 - The 1-year query reads 365 day files; measured 106 ms (query) and 155 ms
-  first, 115–216 ms warm (page, end to end) on a development machine; the Pi
-  has not been measured yet. If the Pi exceeds the 2 s target, pre-aggregated
+  first, 115–216 ms warm (page, end to end) on a development machine, with
+  the OS page cache warm (it cannot be dropped without root); the Pi has not
+  been measured yet. If the Pi exceeds the 2 s target, pre-aggregated
   daily files come next, under a new ADR.
 - No JavaScript build step; uPlot upgrades are manual.
