@@ -49,12 +49,15 @@ impl<H: HealthProvider, P: Publisher, S: BackfillStore> HealthBackfill<'_, H, P,
         };
         let mut opened = None;
         while !cursor.is_done() {
-            if !turn(until, &clock).await {
-                return;
-            }
             let Some(open) = self.session(opened.take(), until, &clock).await else {
                 return;
             };
+            if !turn(until, &clock).await {
+                return;
+            }
+            if clock().duration_since(open.at) >= SESSION_MAX_AGE {
+                continue;
+            }
             let date = cursor.next;
             if let Step::Stop = self.day(&open.session, date, day_stamp(date)).await {
                 return;
@@ -93,17 +96,16 @@ impl<H: HealthProvider, P: Publisher, S: BackfillStore> HealthBackfill<'_, H, P,
         Some(cursor)
     }
 
-    /// `current` while it is young enough, else a new session; `None` when
-    /// there is no time left or Garmin refuses the session.
+    /// `current`, else a new session after its own wait; `None` when there is
+    /// no time left or Garmin refuses the session.
     async fn session(
         &self,
         current: Option<Opened<H::Session>>,
         until: Timestamp,
         clock: &impl Fn() -> Timestamp,
     ) -> Option<Opened<H::Session>> {
-        if let Some(open) = current.filter(|open| clock().duration_since(open.at) < SESSION_MAX_AGE)
-        {
-            return Some(open);
+        if current.is_some() {
+            return current;
         }
         if !turn(until, clock).await {
             return None;
@@ -621,8 +623,23 @@ mod tests {
         });
         run(&provider, &publisher, &store, DAY).await;
         let seen = provider.opens_at_fetch.lock().expect("lock").clone();
-        assert_eq!(seen[29], 1);
-        assert_eq!(seen[30], 2);
+        assert_eq!(seen[28], 1);
+        assert_eq!(seen[29], 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_first_day_after_an_open_waits_and_needs_the_margin() {
+        let provider = TestProvider::default();
+        let (publisher, store) = (TestPublisher::default(), TestStore::default());
+        run(
+            &provider,
+            &publisher,
+            &store,
+            Duration::from_secs(6 * 60 + 30),
+        )
+        .await;
+        assert_eq!(provider.opens(), 1);
+        assert!(provider.fetched().is_empty());
     }
 
     #[tokio::test(start_paused = true)]
