@@ -1,19 +1,24 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en"{% if let Some(secs) = page.refresh_secs() %} data-refresh="{{ secs }}"{% endif %}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>{{ page.label() }} · Home monitor</title>
 <style>{{ crate::page::APP_CSS|safe }}</style>
-{% if let Some(secs) = page.refresh_secs() %}
+{% if page.refresh_secs().is_some() %}
 <script>
-setInterval(function () {
-  var active = document.activeElement;
-  if (document.visibilityState === "visible" && (active === null || active === document.body)) {
-    location.reload();
+(function () {
+  var period = Number(document.documentElement.dataset.refresh) * 1000;
+  var loaded = Date.now();
+  function check() {
+    if (document.visibilityState !== "visible" || Date.now() - loaded < period - 500) return;
+    var active = document.activeElement;
+    if (!(active && active.matches("input,select,textarea,[contenteditable]"))) location.reload();
   }
-}, {{ secs }} * 1000);
+  setInterval(check, period);
+  document.addEventListener("visibilitychange", check);
+})();
 </script>
 {% endif %}
 {% block head %}{% endblock %}

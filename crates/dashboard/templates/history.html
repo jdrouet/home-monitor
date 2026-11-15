@@ -48,6 +48,8 @@ const element = document.getElementById("chart");
 const style = getComputedStyle(document.documentElement);
 const token = (name) => style.getPropertyValue(name).trim();
 let plot = null;
+const width = () => Math.max(200, element.clientWidth);
+const height = () => (window.matchMedia("(min-width: 48rem)").matches ? 360 : 240);
 function draw() {
   if (plot) plot.destroy();
   const muted = token("--text-muted");
@@ -60,14 +62,17 @@ function draw() {
     return { label: label, stroke: token("--chart-" + (i % 8 + 1)), width: 2, dash: i % 2 ? [6, 4] : [] };
   });
   plot = new uPlot({
-    width: Math.max(300, element.clientWidth),
-    height: window.matchMedia("(min-width: 48rem)").matches ? 360 : 240,
+    width: width(),
+    height: height(),
     tzDate: (ts) => uPlot.tzDate(new Date(ts * 1000), "Europe/Paris"),
     axes: [axis, axis],
     series: [{}].concat(series),
   }, [timestamps].concat(lines), element);
 }
-window.addEventListener("resize", draw);
+function resize() {
+  if (width() !== plot.width || height() !== plot.height) plot.setSize({ width: width(), height: height() });
+}
+window.addEventListener("resize", resize);
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
 draw();
 </script>

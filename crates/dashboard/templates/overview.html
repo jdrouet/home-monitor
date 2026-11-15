@@ -2,16 +2,18 @@
 {% import "macros.html" as macros %}
 {% macro missing() %}<span aria-hidden="true">—</span><span class="visually-hidden">no reading</span>{% endmacro %}
 {% macro metric(r) %}
-<p class="metric">{% if let Some(t) = r.temperature %}<span class="metric-value">{{ "{:.1}"|format(t) }}</span><span class="metric-unit">°C</span>{% else %}<span class="metric-value">{% call missing() %}{% endcall %}</span>{% endif %}</p>
+<p class="metric">{% if let Some(t) = r.temperature %}<span class="metric-value">{{ "{:.1}"|format(t) }}</span><span class="metric-unit">°C</span>{% else %}<span class="metric-value">{% call missing() %}{% endcall %}</span>{% endif %}{% if r.freshness == Freshness::NotReporting %}<span class="badge badge--warn">Not reporting</span>{% endif %}</p>
 {% endmacro %}
 {% macro humidity(r) %}
 <p class="secondary">{% if let Some(h) = r.humidity %}{{ "{:.1}"|format(h) }} % humidity{% else %}{% call missing() %}{% endcall %}{% endif %}</p>
 {% endmacro %}
 {% macro card(title, r, mono) %}
 <div class="card{% if r.freshness == Freshness::NotReporting %} card--stale{% endif %}">
-<h3{% if mono %} class="mono"{% endif %}>{{ title }}{% if r.freshness == Freshness::NotReporting %} <span class="badge badge--warn">Not reporting</span>{% endif %}</h3>
+<h3{% if mono %} class="mono"{% endif %}>{{ title }}</h3>
 {% call metric(r) %}{% endcall %}
+{% if r.temperature.is_some() || r.humidity.is_some() %}
 {% call humidity(r) %}{% endcall %}
+{% endif %}
 </div>
 {% endmacro %}
 {% block meta %}<span>Updated {{ updated }}</span>{% endblock %}

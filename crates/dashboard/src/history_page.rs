@@ -136,6 +136,7 @@ mod tests {
         assert!(html.contains(r#"src="/assets/uplot-1.6.32.min.js""#));
         assert_shell(&html, Page::History);
         assert!(!html.contains("location.reload"));
+        assert!(!html.contains("data-refresh"));
         assert!(html.contains(r#"<div id="chart">"#));
         assert!(html.contains("const timestamps = [0,900];"));
         assert!(html.contains("const lines = [[1.5,null]];"));

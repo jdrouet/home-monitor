@@ -216,7 +216,7 @@ mod tests {
     async fn the_page_has_the_shell_with_overview_current() {
         let html = page(&overview(Vec::new())).await;
         assert_shell(&html, Page::Overview);
-        assert!(html.contains("}, 60 * 1000);"));
+        assert!(html.contains(r#"<html lang="en" data-refresh="60">"#));
     }
 
     #[tokio::test]
@@ -250,6 +250,7 @@ mod tests {
         let (status, html) = response(None, Some(&active(1))).await;
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert!(html.contains("Room values unavailable"));
+        assert!(html.contains("Updated 13:30"));
         assert!(html.contains("room1"));
         assert!(!html.contains("Rooms and weather"));
         assert_shell(&html, Page::Overview);

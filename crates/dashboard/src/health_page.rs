@@ -147,7 +147,7 @@ mod tests {
         assert_shell(&html, Page::Health);
         assert!(html.contains("No health data in the last 30 days"));
         assert!(!html.contains("<table"));
-        assert!(html.contains("}, 300 * 1000);"));
+        assert!(html.contains(r#"<html lang="en" data-refresh="300">"#));
     }
 
     #[tokio::test]

@@ -23,7 +23,7 @@ overview, and gives each failure a rendered state instead of a bare
   owner's action.
 - Auto refresh periods are unchanged: Overview 60 s, Alerts 60 s, Health
   300 s, History none. An inline script reloads the page only while it is
-  visible and nothing has focus (ADR-0026). No page uses a
+  visible and no form field has focus (ADR-0026). No page uses a
   `<meta http-equiv="refresh">`.
 
 ## Overview `/`
@@ -76,17 +76,20 @@ does not add to the store's time.
 └──────────────────────────────────────┘ 640 + bottom padding
 ```
 
-Vertical budget, in CSS px: nav 48, header 44, alerts 44 to 132, gap 16,
-rooms (3 rows × 96 + 2 × 12) 312, gap 12, outside 104, padding 16. The total
-is 596 px with no alerts and 684 px with three alert rows and six rooms. With
-four rooms it is at most 576 px.
+Vertical budget, in CSS px, from the stylesheet and not measured on a device:
+nav 48, page top padding 16, header 40 (title 24 and a 16 gap), alerts 48
+(the "No alerts" notice) or 141 (three rows of 46), gap 24, rooms (3 rows of
+103, with 2 gaps of 12) 332, gap 24, outside 111, bottom padding 16. The
+total is about 658 px with no alerts and 751 px with three alert rows and six
+rooms. With four rooms it is about 544 px and 637 px.
 
 The target is a visible height of about 690 px. Chrome on Android and Safari
-with the compact tab bar give roughly that height at 390 × 844; these are
-estimates, and the layout has not been measured on a device. Below that
-height (for example, Safari with both bars expanded), the worst case of six
-rooms and three alert rows may hide part of the Outside card. Alerts and
-every room value stay in view.
+with the compact tab bar give roughly that height at 390 × 844. With six
+rooms and three alert rows, the alerts and every room card end at about
+601 px, and the Outside card starts at about 625 px, so about 65 px of it is
+visible and the rest needs a short scroll. Everything fits in the full 844 px.
+A card with no readings shows one "—" line next to its badge, so it is
+shorter than its neighbours; its row keeps the height of the taller card.
 
 - Alert rows on the overview are single-line: badge, subject, and time. The
   time keeps the existing `since YYYY-MM-DD HH:MM` format; the sketch shortens

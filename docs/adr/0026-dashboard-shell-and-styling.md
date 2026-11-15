@@ -16,9 +16,12 @@ fails WCAG F41 because it reloads the page under the user's focus.
   for about 5 to 7 KB on a LAN page that reloads every 60 s.
 - The base template owns the head, the skip link, the nav and the page header,
   so the shell cannot drift between pages.
-- An inline script replaces the meta refresh. It reloads on the page's period
-  (Overview and Alerts 60 s, Health 300 s) only while the page is visible and
-  no element has focus. History does not reload.
+- An inline script replaces the meta refresh. It reads the page's period from a
+  `data-refresh` attribute (Overview and Alerts 60 s, Health 300 s) and
+  reloads only while the page is visible and no form field has focus, so a
+  focused link or table does not stop it. When a hidden page becomes visible
+  and a full period has passed since load, it reloads at once. History does
+  not reload.
 - The overview reads the alerter concurrently with the store. An alerter that
   is down gives status 200 and a notice. A store that is down renders the shell
   and a notice, and keeps status 502, on every page.
