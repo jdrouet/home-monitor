@@ -14,7 +14,7 @@ use domain::{SourceId, Timestamp};
 use garmin_connect::{GarminConnect, TokenFile};
 use mqtt::MqttPublisher;
 use prompt::prompt_line;
-use schedule::{next_pull, pull_days};
+use schedule::{next_pull, pull_days, wait_until};
 use tokio::net::TcpListener;
 use tokio::time::sleep;
 use use_cases::{HealthProvider, Publisher, collect_health};
@@ -81,8 +81,9 @@ async fn collect(mqtt: &MqttConfig, health: &HealthCollectorConfig) -> anyhow::R
     }
 }
 
-/// Pulls at startup, then at every daily pull time. A failed pull is not
-/// retried before the next one.
+/// Pulls at startup, then at every daily pull time. The next deadline is
+/// fixed before a pull starts, so a slow pull cannot skip it. A failed pull
+/// is not retried before the next one.
 async fn pull_forever<H: HealthProvider, P: Publisher>(
     provider: &H,
     publisher: &P,
@@ -90,8 +91,8 @@ async fn pull_forever<H: HealthProvider, P: Publisher>(
 ) -> Infallible {
     loop {
         let started = Timestamp::now();
+        let next = next_pull(started);
         collect_health(provider, publisher, source_id, &pull_days(started)).await;
-        let finished = Timestamp::now();
-        sleep(next_pull(finished).duration_since(finished)).await;
+        sleep(wait_until(next, Timestamp::now())).await;
     }
 }

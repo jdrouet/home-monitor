@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use chrono::{NaiveTime, TimeDelta};
 use domain::Timestamp;
 use paris_clock::{paris_at, paris_date};
@@ -36,12 +38,19 @@ pub fn next_pull(now: Timestamp) -> Timestamp {
     paris_at(tomorrow, PULL_AT)
 }
 
+/// How long to sleep from `now` until `next`; zero when `next` has passed.
+pub fn wait_until(next: Timestamp, now: Timestamp) -> Duration {
+    next.duration_since(now)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use chrono::{DateTime, NaiveDate};
     use domain::Timestamp;
 
-    use super::{next_pull, pull_days};
+    use super::{next_pull, pull_days, wait_until};
 
     fn at(rfc3339: &str) -> Timestamp {
         let instant = DateTime::parse_from_rfc3339(rfc3339).expect("valid instant");
@@ -121,6 +130,24 @@ mod tests {
         assert_eq!(
             next_pull(at("2026-10-24T12:00:00Z")),
             at("2026-10-25T09:00:00Z")
+        );
+    }
+
+    #[test]
+    fn a_pull_that_overruns_the_next_deadline_does_not_wait() {
+        let started = at("2026-01-15T08:59:55Z");
+        let next = next_pull(started);
+        let finished = at("2026-01-15T09:00:05Z");
+        assert_eq!(next, at("2026-01-15T09:00:00Z"));
+        assert_eq!(wait_until(next, finished), Duration::ZERO);
+    }
+
+    #[test]
+    fn the_wait_is_the_time_left_before_the_deadline() {
+        let next = at("2026-01-15T09:00:00Z");
+        assert_eq!(
+            wait_until(next, at("2026-01-15T08:59:00Z")),
+            Duration::from_secs(60)
         );
     }
 }
