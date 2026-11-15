@@ -101,7 +101,7 @@ async fn pull_forever<H: HealthProvider, P: Publisher, S: BackfillStore>(
         let started = Timestamp::now();
         let next = next_pull(started);
         let pull = collect_health(provider, publisher, source_id, &pull_days(started)).await;
-        if pull == HealthPull::Completed {
+        if matches!(pull, HealthPull::Completed { .. }) {
             HealthBackfill {
                 provider,
                 publisher,

@@ -1,15 +1,23 @@
+use chrono::NaiveDate;
 use domain::{SourceId, SourceKind};
 use tracing::{error, warn};
 
 use crate::{HealthDay, HealthProvider, Publisher};
 
-/// How a pull ended. #16 alerts on `SessionFailed`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How a pull ended. The alerter raises the login alert on `SessionFailed`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HealthPull {
-    Completed,
+    /// The pull ran to the end. `fetched` lists the days whose fetch worked
+    /// and whose publish worked or had nothing to publish.
+    Completed {
+        fetched: Vec<NaiveDate>,
+    },
     SessionFailed,
-    /// Garmin asked the client to slow down during a daily fetch.
+    /// Garmin asked the client to slow down.
     Throttled,
+    /// The session could not open for a reason a login would not fix, such
+    /// as a network error or an outage.
+    Failed,
 }
 
 /// Pulls each of `days` through one session and publishes the measurements.
@@ -23,11 +31,20 @@ pub async fn collect_health<H: HealthProvider, P: Publisher>(
 ) -> HealthPull {
     let session = match provider.open().await {
         Ok(session) => session,
-        Err(error) => {
+        Err(error) if H::is_throttled(&error) => {
+            warn!(%error, "health session throttled, skipping this pull");
+            return HealthPull::Throttled;
+        }
+        Err(error) if H::is_session_error(&error) => {
             error!(%error, "health session failed, skipping this pull");
             return HealthPull::SessionFailed;
         }
+        Err(error) => {
+            error!(%error, "health session could not open, skipping this pull");
+            return HealthPull::Failed;
+        }
     };
+    let mut fetched = Vec::new();
     for day in days {
         let health = match provider.daily(&session, day.date).await {
             Ok(health) => health,
@@ -46,16 +63,20 @@ pub async fn collect_health<H: HealthProvider, P: Publisher>(
         };
         let batch = health.measurements(source_id, day.stamp);
         if batch.is_empty() {
+            fetched.push(day.date);
             continue;
         }
-        if let Err(error) = publisher
+        match publisher
             .publish(SourceKind::Health, source_id, &batch)
             .await
         {
-            warn!(%error, date = %day.date, "health publish failed, skipping this day");
+            Ok(()) => fetched.push(day.date),
+            Err(error) => {
+                warn!(%error, date = %day.date, "health publish failed, skipping this day");
+            }
         }
     }
-    HealthPull::Completed
+    HealthPull::Completed { fetched }
 }
 
 #[cfg(test)]
@@ -77,6 +98,7 @@ mod tests {
         Session,
         Day,
         Throttled,
+        Network,
     }
 
     impl fmt::Display for TestError {
@@ -98,6 +120,12 @@ mod tests {
         }
     }
 
+    fn completed(days: &[u32]) -> HealthPull {
+        HealthPull::Completed {
+            fetched: days.iter().map(|day| date(*day)).collect(),
+        }
+    }
+
     fn steps(count: u32) -> DailyHealth {
         DailyHealth {
             steps: Some(count),
@@ -107,7 +135,7 @@ mod tests {
 
     #[derive(Default)]
     struct TestProvider {
-        open_fails: bool,
+        open_error: Option<TestError>,
         results: HashMap<NaiveDate, Result<DailyHealth, TestError>>,
         fetched: Mutex<Vec<NaiveDate>>,
     }
@@ -117,11 +145,7 @@ mod tests {
         type Error = TestError;
 
         async fn open(&self) -> Result<(), TestError> {
-            if self.open_fails {
-                Err(TestError::Session)
-            } else {
-                Ok(())
-            }
+            self.open_error.map_or(Ok(()), Err)
         }
 
         async fn daily(&self, _session: &(), date: NaiveDate) -> Result<DailyHealth, TestError> {
@@ -198,7 +222,7 @@ mod tests {
         };
         let publisher = TestPublisher::default();
         let outcome = run(&provider, &publisher, &[day(1), day(2)]).await;
-        assert_eq!(outcome, HealthPull::Completed);
+        assert_eq!(outcome, completed(&[1, 2]));
         assert_eq!(stamps(&publisher), [1, 2]);
         let published = publisher.published.lock().expect("lock");
         assert_eq!(published[0].0, SourceKind::Health);
@@ -206,16 +230,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn open_failure_fetches_and_publishes_nothing() {
-        let provider = TestProvider {
-            open_fails: true,
-            ..TestProvider::default()
-        };
-        let publisher = TestPublisher::default();
-        let outcome = run(&provider, &publisher, &[day(1)]).await;
-        assert_eq!(outcome, HealthPull::SessionFailed);
-        assert!(provider.fetched.lock().expect("lock").is_empty());
-        assert!(stamps(&publisher).is_empty());
+    async fn an_open_failure_is_classified_and_fetches_and_publishes_nothing() {
+        for (error, expected) in [
+            (TestError::Throttled, HealthPull::Throttled),
+            (TestError::Session, HealthPull::SessionFailed),
+            (TestError::Network, HealthPull::Failed),
+        ] {
+            let provider = TestProvider {
+                open_error: Some(error),
+                ..TestProvider::default()
+            };
+            let publisher = TestPublisher::default();
+            let outcome = run(&provider, &publisher, &[day(1)]).await;
+            assert_eq!(outcome, expected);
+            assert!(provider.fetched.lock().expect("lock").is_empty());
+            assert!(stamps(&publisher).is_empty());
+        }
     }
 
     #[tokio::test]
@@ -226,7 +256,7 @@ mod tests {
         };
         let publisher = TestPublisher::default();
         let outcome = run(&provider, &publisher, &[day(1), day(2)]).await;
-        assert_eq!(outcome, HealthPull::Completed);
+        assert_eq!(outcome, completed(&[2]));
         assert_eq!(stamps(&publisher), [2]);
     }
 
@@ -270,7 +300,7 @@ mod tests {
             ..TestPublisher::default()
         };
         let outcome = run(&provider, &publisher, &[day(1), day(2)]).await;
-        assert_eq!(outcome, HealthPull::Completed);
+        assert_eq!(outcome, completed(&[2]));
         assert_eq!(stamps(&publisher), [2]);
     }
 
@@ -279,7 +309,7 @@ mod tests {
         let provider = TestProvider::default();
         let publisher = TestPublisher::default();
         let outcome = run(&provider, &publisher, &[day(1)]).await;
-        assert_eq!(outcome, HealthPull::Completed);
+        assert_eq!(outcome, completed(&[1]));
         assert!(stamps(&publisher).is_empty());
     }
 }
