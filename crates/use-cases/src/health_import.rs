@@ -74,16 +74,15 @@ impl<H: ArchiveSource, P: Publisher, A: RawArchive, S: BackfillStore, C: Activit
 #[cfg(test)]
 mod tests {
     use std::io;
-    use std::sync::Mutex;
 
     use chrono::{Days, NaiveDate};
     use domain::{Measurement, SourceId, SourceKind, Timestamp};
-    use tokio::time::Instant;
 
-    use crate::test_archive::{MemoryArchive, MemoryCursor, ScriptedSource};
+    use crate::test_archive::{
+        MemoryArchive, MemoryBackfill, MemoryCursor, START, ScriptedSource, clock,
+    };
     use crate::{
-        ActivityImport, ArchiveDays, BackfillCursor, BackfillStore, HealthBackfill, HealthDay,
-        HealthImport, HealthPull, Publisher,
+        ActivityImport, ArchiveDays, HealthBackfill, HealthDay, HealthImport, HealthPull, Publisher,
     };
 
     struct TestPublisher;
@@ -102,36 +101,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct TestStore(Mutex<Option<BackfillCursor>>);
-
-    impl TestStore {
-        fn stored(&self) -> Option<BackfillCursor> {
-            *self.0.lock().expect("lock")
-        }
-    }
-
-    impl BackfillStore for TestStore {
-        type Error = io::Error;
-
-        fn load(&self) -> Result<Option<BackfillCursor>, io::Error> {
-            Ok(self.stored())
-        }
-
-        fn save(&self, cursor: &BackfillCursor) -> Result<(), io::Error> {
-            *self.0.lock().expect("lock") = Some(*cursor);
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
     struct Stores {
-        gap: TestStore,
-        yearly: TestStore,
-        archive: TestStore,
+        gap: MemoryBackfill,
+        yearly: MemoryBackfill,
+        archive: MemoryBackfill,
         activities: MemoryCursor,
     }
-
-    const START: i64 = 1_000_000_000_000_000;
 
     fn today() -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 11, 15).expect("valid date")
@@ -176,18 +151,13 @@ mod tests {
                 store: &stores.archive,
             },
         };
-        let start = Instant::now();
-        let clock = move || {
-            let elapsed = i64::try_from(start.elapsed().as_micros()).expect("fits");
-            Timestamp::from_micros(START + elapsed)
-        };
         let requested = [HealthDay {
             date: yesterday(),
             stamp: stamp(yesterday()),
         }];
         let until = Timestamp::from_micros(START + 86_400_000_000);
         import
-            .after_pull(&pull, &requested, today(), until, clock, stamp)
+            .after_pull(&pull, &requested, today(), until, clock(), stamp)
             .await;
     }
 

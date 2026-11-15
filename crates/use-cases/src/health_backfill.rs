@@ -145,11 +145,10 @@ mod tests {
 
     use chrono::{Datelike, NaiveDate};
     use domain::{Measurement, SourceId, SourceKind, Timestamp};
-    use tokio::time::{Instant, sleep};
+    use tokio::time::sleep;
 
-    use crate::{
-        BackfillCursor, BackfillStore, DailyHealth, HealthBackfill, HealthProvider, Publisher,
-    };
+    use crate::test_archive::{MemoryBackfill, START, after, clock};
+    use crate::{BackfillCursor, DailyHealth, HealthBackfill, HealthProvider, Publisher};
 
     use super::RunEnd;
 
@@ -296,72 +295,12 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct TestStore {
-        load_fails: bool,
-        save_fails: bool,
-        stored: Mutex<Option<BackfillCursor>>,
-        saves: Mutex<Vec<BackfillCursor>>,
-    }
-
-    impl TestStore {
-        fn holding(cursor: BackfillCursor) -> Self {
-            Self {
-                stored: Mutex::new(Some(cursor)),
-                ..Self::default()
-            }
-        }
-
-        fn stored(&self) -> Option<BackfillCursor> {
-            *self.stored.lock().expect("lock")
-        }
-
-        fn saves(&self) -> Vec<BackfillCursor> {
-            self.saves.lock().expect("lock").clone()
-        }
-    }
-
-    impl BackfillStore for TestStore {
-        type Error = io::Error;
-
-        fn load(&self) -> Result<Option<BackfillCursor>, io::Error> {
-            if self.load_fails {
-                return Err(io::Error::other("corrupt"));
-            }
-            Ok(self.stored())
-        }
-
-        fn save(&self, cursor: &BackfillCursor) -> Result<(), io::Error> {
-            if self.save_fails {
-                return Err(io::Error::other("disk full"));
-            }
-            self.saves.lock().expect("lock").push(*cursor);
-            *self.stored.lock().expect("lock") = Some(*cursor);
-            Ok(())
-        }
-    }
-
-    const START: i64 = 1_000_000_000_000_000;
-
-    fn clock() -> impl Fn() -> Timestamp {
-        let start = Instant::now();
-        move || {
-            let elapsed = i64::try_from(start.elapsed().as_micros()).expect("fits");
-            Timestamp::from_micros(START + elapsed)
-        }
-    }
-
-    fn after(window: Duration) -> Timestamp {
-        let window = i64::try_from(window.as_micros()).expect("fits");
-        Timestamp::from_micros(START + window)
-    }
-
     const DAY: Duration = Duration::from_secs(86_400);
 
     async fn run_with(
         provider: &TestProvider,
         publisher: &TestPublisher,
-        store: &TestStore,
+        store: &MemoryBackfill,
         until: Timestamp,
         clock: impl Fn() -> Timestamp,
     ) -> RunEnd {
@@ -384,7 +323,7 @@ mod tests {
     async fn run(
         provider: &TestProvider,
         publisher: &TestPublisher,
-        store: &TestStore,
+        store: &MemoryBackfill,
         window: Duration,
     ) -> Timestamp {
         let clock = clock();
@@ -395,7 +334,7 @@ mod tests {
     async fn end(
         provider: &TestProvider,
         publisher: &TestPublisher,
-        store: &TestStore,
+        store: &MemoryBackfill,
         window: Duration,
     ) -> RunEnd {
         run_with(provider, publisher, store, after(window), clock()).await
@@ -413,7 +352,7 @@ mod tests {
         let (provider, publisher, store) = (
             TestProvider::default(),
             TestPublisher::default(),
-            TestStore::default(),
+            MemoryBackfill::default(),
         );
         run(&provider, &publisher, &store, DAY).await;
         let anchored = BackfillCursor::anchored_at(today());
@@ -426,7 +365,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_stored_cursor_wins_over_today() {
         let (provider, publisher) = (TestProvider::default(), TestPublisher::default());
-        let store = TestStore::holding(three_days());
+        let store = MemoryBackfill::holding(three_days());
         run(&provider, &publisher, &store, DAY).await;
         assert_eq!(provider.fetched(), [jan(1), jan(2), jan(3)]);
         assert_eq!(
@@ -440,7 +379,7 @@ mod tests {
         let (provider, publisher, store) = (
             TestProvider::default(),
             TestPublisher::default(),
-            TestStore::default(),
+            MemoryBackfill::default(),
         );
         run(&provider, &publisher, &store, Duration::from_secs(20 * 60)).await;
         let first = provider.fetched().len();
@@ -452,7 +391,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn the_cursor_advances_once_per_published_day() {
         let (provider, publisher) = (TestProvider::default(), TestPublisher::default());
-        let store = TestStore::holding(three_days());
+        let store = MemoryBackfill::holding(three_days());
         run(&provider, &publisher, &store, DAY).await;
         let saved: Vec<_> = store.saves().iter().map(|cursor| cursor.next).collect();
         assert_eq!(saved, [jan(2), jan(3), jan(4)]);
@@ -465,7 +404,7 @@ mod tests {
             failing: [stamp(jan(2)).as_micros()].into(),
             ..TestPublisher::default()
         };
-        let store = TestStore::holding(three_days());
+        let store = MemoryBackfill::holding(three_days());
         run(&provider, &failing, &store, DAY).await;
         assert_eq!(provider.fetched(), [jan(1), jan(2)]);
         assert_eq!(store.stored().expect("cursor").next, jan(2));
@@ -481,7 +420,10 @@ mod tests {
             results: HashMap::from([(jan(2), Err(TestError::Throttled))]),
             ..TestProvider::default()
         };
-        let (publisher, store) = (TestPublisher::default(), TestStore::holding(three_days()));
+        let (publisher, store) = (
+            TestPublisher::default(),
+            MemoryBackfill::holding(three_days()),
+        );
         run(&throttled, &publisher, &store, DAY).await;
         assert_eq!(throttled.fetched(), [jan(1), jan(2)]);
         assert_eq!(store.stored().expect("cursor").next, jan(2));
@@ -496,7 +438,7 @@ mod tests {
             open_fails: true,
             ..TestProvider::default()
         };
-        let (publisher, store) = (TestPublisher::default(), TestStore::default());
+        let (publisher, store) = (TestPublisher::default(), MemoryBackfill::default());
         run(&provider, &publisher, &store, DAY).await;
         assert_eq!(provider.opens(), 1);
         assert!(provider.fetched().is_empty());
@@ -509,7 +451,10 @@ mod tests {
             results: HashMap::from([(jan(2), Err(TestError::Session))]),
             ..TestProvider::default()
         };
-        let (publisher, store) = (TestPublisher::default(), TestStore::holding(three_days()));
+        let (publisher, store) = (
+            TestPublisher::default(),
+            MemoryBackfill::holding(three_days()),
+        );
         run(&rejected, &publisher, &store, DAY).await;
         assert_eq!(store.stored().expect("cursor").next, jan(2));
         let healthy = TestProvider::default();
@@ -523,7 +468,7 @@ mod tests {
             fetch_delay: Duration::from_secs(6),
             ..TestProvider::default()
         };
-        let (publisher, store) = (TestPublisher::default(), TestStore::default());
+        let (publisher, store) = (TestPublisher::default(), MemoryBackfill::default());
         let window = Duration::from_secs(20 * 60);
         let end = run(&provider, &publisher, &store, window).await;
         assert!(!provider.fetched().is_empty());
@@ -533,7 +478,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn no_step_starts_without_room_for_the_spacing_and_the_margin() {
         let provider = TestProvider::default();
-        let (publisher, store) = (TestPublisher::default(), TestStore::default());
+        let (publisher, store) = (TestPublisher::default(), MemoryBackfill::default());
         run(
             &provider,
             &publisher,
@@ -547,7 +492,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_wake_past_the_window_starts_nothing() {
         let provider = TestProvider::default();
-        let (publisher, store) = (TestPublisher::default(), TestStore::default());
+        let (publisher, store) = (TestPublisher::default(), MemoryBackfill::default());
         let calls = AtomicUsize::new(0);
         let late_wake = || {
             if calls.fetch_add(1, Ordering::SeqCst) == 0 {
@@ -565,7 +510,10 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_finished_import_never_contacts_garmin_again() {
         let provider = TestProvider::default();
-        let (publisher, store) = (TestPublisher::default(), TestStore::holding(three_days()));
+        let (publisher, store) = (
+            TestPublisher::default(),
+            MemoryBackfill::holding(three_days()),
+        );
         run(&provider, &publisher, &store, DAY).await;
         let opens = provider.opens();
         run(&provider, &publisher, &store, DAY).await;
@@ -576,7 +524,10 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_session_is_reused_within_its_age() {
         let provider = TestProvider::default();
-        let (publisher, store) = (TestPublisher::default(), TestStore::holding(three_days()));
+        let (publisher, store) = (
+            TestPublisher::default(),
+            MemoryBackfill::holding(three_days()),
+        );
         run(&provider, &publisher, &store, DAY).await;
         assert_eq!(provider.opens(), 1);
     }
@@ -588,7 +539,7 @@ mod tests {
             ..TestProvider::default()
         };
         let publisher = TestPublisher::default();
-        let store = TestStore::holding(BackfillCursor {
+        let store = MemoryBackfill::holding(BackfillCursor {
             next: jan(1),
             last: jan(12),
         });
@@ -601,7 +552,7 @@ mod tests {
     async fn the_session_age_is_checked_after_the_pacing_wait() {
         let provider = TestProvider::default();
         let publisher = TestPublisher::default();
-        let store = TestStore::holding(BackfillCursor {
+        let store = MemoryBackfill::holding(BackfillCursor {
             next: jan(1),
             last: jan(31),
         });
@@ -614,7 +565,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn the_first_day_after_an_open_waits_and_needs_the_margin() {
         let provider = TestProvider::default();
-        let (publisher, store) = (TestPublisher::default(), TestStore::default());
+        let (publisher, store) = (TestPublisher::default(), MemoryBackfill::default());
         run(
             &provider,
             &publisher,
@@ -635,7 +586,10 @@ mod tests {
             ]),
             ..TestProvider::default()
         };
-        let (publisher, store) = (TestPublisher::default(), TestStore::holding(three_days()));
+        let (publisher, store) = (
+            TestPublisher::default(),
+            MemoryBackfill::holding(three_days()),
+        );
         run(&provider, &publisher, &store, DAY).await;
         assert_eq!(publisher.stamps(), [stamp(jan(3)).as_micros()]);
         assert!(store.stored().expect("cursor").is_done());
@@ -646,9 +600,9 @@ mod tests {
         let provider = TestProvider::default();
         let (publisher, store) = (
             TestPublisher::default(),
-            TestStore {
+            MemoryBackfill {
                 load_fails: true,
-                ..TestStore::default()
+                ..MemoryBackfill::default()
             },
         );
         run(&provider, &publisher, &store, DAY).await;
@@ -660,10 +614,10 @@ mod tests {
     async fn a_failed_save_stops_after_the_first_day() {
         let provider = TestProvider::default();
         let publisher = TestPublisher::default();
-        let store = TestStore {
+        let store = MemoryBackfill {
             save_fails: true,
             stored: Mutex::new(Some(three_days())),
-            ..TestStore::default()
+            ..MemoryBackfill::default()
         };
         run(&provider, &publisher, &store, DAY).await;
         assert_eq!(provider.fetched(), [jan(1)]);
@@ -675,9 +629,9 @@ mod tests {
         let provider = TestProvider::default();
         let (publisher, store) = (
             TestPublisher::default(),
-            TestStore {
+            MemoryBackfill {
                 save_fails: true,
-                ..TestStore::default()
+                ..MemoryBackfill::default()
             },
         );
         run(&provider, &publisher, &store, DAY).await;
@@ -687,7 +641,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn an_unchanged_plan_saves_nothing_and_a_changed_one_saves_once() {
         let (provider, publisher) = (TestProvider::default(), TestPublisher::default());
-        let store = TestStore::holding(three_days());
+        let store = MemoryBackfill::holding(three_days());
         let source_id = SourceId::from("garmin".to_owned());
         let backfill = HealthBackfill {
             provider: &provider,
@@ -711,7 +665,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_plan_that_is_done_is_saved_and_ends_done_without_contacting_garmin() {
         let (provider, publisher) = (TestProvider::default(), TestPublisher::default());
-        let store = TestStore::holding(three_days());
+        let store = MemoryBackfill::holding(three_days());
         let source_id = SourceId::from("garmin".to_owned());
         let done = BackfillCursor {
             next: jan(5),
@@ -733,7 +687,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_finished_range_ends_done() {
         let (provider, publisher) = (TestProvider::default(), TestPublisher::default());
-        let store = TestStore::holding(three_days());
+        let store = MemoryBackfill::holding(three_days());
         assert_eq!(end(&provider, &publisher, &store, DAY).await, RunEnd::Done);
         assert_eq!(end(&provider, &publisher, &store, DAY).await, RunEnd::Done);
     }
@@ -741,14 +695,14 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_short_window_ends_out_of_time() {
         let (provider, publisher) = (TestProvider::default(), TestPublisher::default());
-        let store = TestStore::holding(three_days());
+        let store = MemoryBackfill::holding(three_days());
         let window = Duration::from_secs(6 * 60 - 1);
         assert_eq!(
             end(&provider, &publisher, &store, window).await,
             RunEnd::OutOfTime
         );
         let window = Duration::from_secs(20 * 60);
-        let store = TestStore::default();
+        let store = MemoryBackfill::default();
         assert_eq!(
             end(&provider, &publisher, &store, window).await,
             RunEnd::OutOfTime
@@ -758,9 +712,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn an_unreadable_cursor_ends_skipped() {
         let (provider, publisher) = (TestProvider::default(), TestPublisher::default());
-        let store = TestStore {
+        let store = MemoryBackfill {
             load_fails: true,
-            ..TestStore::default()
+            ..MemoryBackfill::default()
         };
         assert_eq!(
             end(&provider, &publisher, &store, DAY).await,
@@ -771,7 +725,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn failures_end_stopped() {
         let publisher = TestPublisher::default();
-        let store = || TestStore::holding(three_days());
+        let store = || MemoryBackfill::holding(three_days());
         let open_fails = TestProvider {
             open_fails: true,
             ..TestProvider::default()
@@ -799,18 +753,18 @@ mod tests {
             end(&provider, &failing, &store(), DAY).await,
             RunEnd::Stopped
         );
-        let unsaved = TestStore {
+        let unsaved = MemoryBackfill {
             save_fails: true,
             stored: Mutex::new(Some(three_days())),
-            ..TestStore::default()
+            ..MemoryBackfill::default()
         };
         assert_eq!(
             end(&provider, &publisher, &unsaved, DAY).await,
             RunEnd::Stopped
         );
-        let unanchored = TestStore {
+        let unanchored = MemoryBackfill {
             save_fails: true,
-            ..TestStore::default()
+            ..MemoryBackfill::default()
         };
         assert_eq!(
             end(&provider, &publisher, &unanchored, DAY).await,

@@ -44,7 +44,7 @@ mod test_archive;
 mod weather_provider;
 mod weather_report;
 
-pub use activity_cursor::{ACTIVITY_PAGE, ActivityCursor};
+pub use activity_cursor::ActivityCursor;
 pub use activity_cursor_store::ActivityCursorStore;
 pub use activity_id::ActivityId;
 pub use activity_import::ActivityImport;

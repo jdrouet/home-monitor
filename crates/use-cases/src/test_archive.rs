@@ -7,12 +7,30 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use chrono::NaiveDate;
-use tokio::time::sleep;
+use domain::Timestamp;
+use tokio::time::{Instant, sleep};
 
 use crate::{
-    ActivityCursor, ActivityCursorStore, ActivityRef, ArchiveKey, ArchiveSource, DailyHealth,
-    DocumentKey, Fetched, HealthProvider, RawArchive,
+    ActivityCursor, ActivityCursorStore, ActivityRef, ArchiveKey, ArchiveSource, BackfillCursor,
+    BackfillStore, DailyHealth, DocumentKey, Fetched, HealthProvider, RawArchive,
 };
+
+pub(crate) const START: i64 = 1_000_000_000_000_000;
+
+/// The instant `window` after the start of the test clock.
+pub(crate) fn after(window: Duration) -> Timestamp {
+    let micros = i64::try_from(window.as_micros()).expect("fits");
+    Timestamp::from_micros(START + micros)
+}
+
+/// A clock that starts at `START` and follows the tokio clock.
+pub(crate) fn clock() -> impl Fn() -> Timestamp {
+    let start = Instant::now();
+    move || {
+        let elapsed = i64::try_from(start.elapsed().as_micros()).expect("fits");
+        Timestamp::from_micros(START + elapsed)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TestError {
@@ -232,6 +250,52 @@ impl ActivityCursorStore for MemoryCursor {
     }
 
     fn save(&self, cursor: &ActivityCursor) -> Result<(), io::Error> {
+        if self.save_fails {
+            return Err(io::Error::other("disk full"));
+        }
+        self.saves.lock().expect("lock").push(*cursor);
+        *self.stored.lock().expect("lock") = Some(*cursor);
+        Ok(())
+    }
+}
+
+/// A backfill cursor in memory; the switches make its calls fail.
+#[derive(Default)]
+pub(crate) struct MemoryBackfill {
+    pub load_fails: bool,
+    pub save_fails: bool,
+    pub stored: Mutex<Option<BackfillCursor>>,
+    pub saves: Mutex<Vec<BackfillCursor>>,
+}
+
+impl MemoryBackfill {
+    pub(crate) fn holding(cursor: BackfillCursor) -> Self {
+        Self {
+            stored: Mutex::new(Some(cursor)),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn stored(&self) -> Option<BackfillCursor> {
+        *self.stored.lock().expect("lock")
+    }
+
+    pub(crate) fn saves(&self) -> Vec<BackfillCursor> {
+        self.saves.lock().expect("lock").clone()
+    }
+}
+
+impl BackfillStore for MemoryBackfill {
+    type Error = io::Error;
+
+    fn load(&self) -> Result<Option<BackfillCursor>, io::Error> {
+        if self.load_fails {
+            return Err(io::Error::other("corrupt"));
+        }
+        Ok(self.stored())
+    }
+
+    fn save(&self, cursor: &BackfillCursor) -> Result<(), io::Error> {
         if self.save_fails {
             return Err(io::Error::other("disk full"));
         }

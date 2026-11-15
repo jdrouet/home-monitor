@@ -1,11 +1,11 @@
 use domain::Timestamp;
 use tracing::{error, info, warn};
 
+use crate::activity_cursor::ACTIVITY_PAGE;
 use crate::archive_documents::{Kept, keep_missing};
 use crate::import_window::{Fit, Opened, fits, open_session, turn};
 use crate::{
-    ACTIVITY_PAGE, ActivityCursor, ActivityCursorStore, ArchiveKey, ArchiveSource, DocumentKey,
-    RawArchive, RunEnd,
+    ActivityCursor, ActivityCursorStore, ArchiveKey, ArchiveSource, DocumentKey, RawArchive, RunEnd,
 };
 
 /// Pages a catch-up may read in one run; the cursor remembers where it got.
@@ -259,16 +259,16 @@ mod tests {
     use std::time::Duration;
 
     use chrono::NaiveDate;
-    use domain::Timestamp;
     use tokio::time::Instant;
 
-    use crate::test_archive::{MemoryArchive, MemoryCursor, ScriptedSource, TestError};
+    use crate::test_archive::{
+        MemoryArchive, MemoryCursor, ScriptedSource, TestError, after, clock,
+    };
     use crate::{
         ActivityCursor, ActivityId, ActivityImport, ActivityRef, ArchiveKey, DocumentKey, Fetched,
         RunEnd,
     };
 
-    const START: i64 = 1_000_000_000_000_000;
     const DAY: Duration = Duration::from_secs(86_400);
     const FILES: [&str; 2] = ["x.json", "y.json"];
 
@@ -334,11 +334,6 @@ mod tests {
         }
     }
 
-    fn after(window: Duration) -> Timestamp {
-        let micros = i64::try_from(window.as_micros()).expect("fits");
-        Timestamp::from_micros(START + micros)
-    }
-
     async fn run_in(
         source: &ScriptedSource,
         archive: &MemoryArchive,
@@ -346,16 +341,12 @@ mod tests {
         window: Duration,
     ) -> (RunEnd, Duration) {
         let start = Instant::now();
-        let clock = move || {
-            let elapsed = i64::try_from(start.elapsed().as_micros()).expect("fits");
-            Timestamp::from_micros(START + elapsed)
-        };
         let end = ActivityImport {
             source,
             archive,
             store,
         }
-        .run(after(window), clock)
+        .run(after(window), clock())
         .await;
         (end, start.elapsed())
     }

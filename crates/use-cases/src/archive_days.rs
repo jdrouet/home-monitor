@@ -108,59 +108,15 @@ fn items<H: ArchiveSource>(date: NaiveDate) -> Vec<(H::Document, DocumentKey, Ar
 
 #[cfg(test)]
 mod tests {
-    use std::io;
-    use std::sync::Mutex;
     use std::time::Duration;
 
     use chrono::NaiveDate;
-    use domain::Timestamp;
-    use tokio::time::Instant;
 
-    use crate::test_archive::{MemoryArchive, ScriptedSource, Stored, TestError};
-    use crate::{ArchiveDays, ArchiveKey, BackfillCursor, BackfillStore, Fetched, RunEnd};
+    use crate::test_archive::{
+        MemoryArchive, MemoryBackfill, ScriptedSource, Stored, TestError, after, clock,
+    };
+    use crate::{ArchiveDays, ArchiveKey, BackfillCursor, Fetched, RunEnd};
 
-    #[derive(Default)]
-    struct TestStore {
-        load_fails: bool,
-        stored: Mutex<Option<BackfillCursor>>,
-        saves: Mutex<Vec<BackfillCursor>>,
-    }
-
-    impl TestStore {
-        fn holding(cursor: BackfillCursor) -> Self {
-            Self {
-                stored: Mutex::new(Some(cursor)),
-                ..Self::default()
-            }
-        }
-
-        fn stored(&self) -> Option<BackfillCursor> {
-            *self.stored.lock().expect("lock")
-        }
-
-        fn saves(&self) -> Vec<BackfillCursor> {
-            self.saves.lock().expect("lock").clone()
-        }
-    }
-
-    impl BackfillStore for TestStore {
-        type Error = io::Error;
-
-        fn load(&self) -> Result<Option<BackfillCursor>, io::Error> {
-            if self.load_fails {
-                return Err(io::Error::other("corrupt"));
-            }
-            Ok(self.stored())
-        }
-
-        fn save(&self, cursor: &BackfillCursor) -> Result<(), io::Error> {
-            self.saves.lock().expect("lock").push(*cursor);
-            *self.stored.lock().expect("lock") = Some(*cursor);
-            Ok(())
-        }
-    }
-
-    const START: i64 = 1_000_000_000_000_000;
     const DAY: Duration = Duration::from_secs(86_400);
 
     fn jan(day: u32) -> NaiveDate {
@@ -182,22 +138,12 @@ mod tests {
         }
     }
 
-    fn after(window: Duration) -> Timestamp {
-        let micros = i64::try_from(window.as_micros()).expect("fits");
-        Timestamp::from_micros(START + micros)
-    }
-
     async fn run(
         source: &ScriptedSource,
         archive: &MemoryArchive,
-        store: &TestStore,
+        store: &MemoryBackfill,
         window: Duration,
     ) -> RunEnd {
-        let start = Instant::now();
-        let clock = move || {
-            let elapsed = i64::try_from(start.elapsed().as_micros()).expect("fits");
-            Timestamp::from_micros(START + elapsed)
-        };
         ArchiveDays {
             source,
             archive,
@@ -206,7 +152,7 @@ mod tests {
         .run(
             |stored| stored.unwrap_or_else(|| BackfillCursor::rolling(None, today(), &[])),
             after(window),
-            clock,
+            clock(),
         )
         .await
     }
@@ -217,7 +163,7 @@ mod tests {
             open_fails: true,
             ..ScriptedSource::default()
         };
-        let store = TestStore::default();
+        let store = MemoryBackfill::default();
         let end = run(&source, &MemoryArchive::default(), &store, DAY).await;
         assert_eq!(end, RunEnd::Stopped);
         assert_eq!(store.saves(), [BackfillCursor::rolling(None, today(), &[])]);
@@ -227,7 +173,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn every_document_of_every_day_is_archived_and_the_range_is_done() {
         let (source, archive) = (ScriptedSource::default(), MemoryArchive::default());
-        let store = TestStore::holding(days(1, 2));
+        let store = MemoryBackfill::holding(days(1, 2));
         assert_eq!(run(&source, &archive, &store, DAY).await, RunEnd::Done);
         assert_eq!(archive.count(), 4);
         assert_eq!(
@@ -245,7 +191,7 @@ mod tests {
             format!("{:?}", key(jan(1), "a.json")),
             Stored::Document(Vec::new()),
         );
-        let store = TestStore::holding(days(1, 1));
+        let store = MemoryBackfill::holding(days(1, 1));
         run(&source, &archive, &store, DAY).await;
         let requested = source.requested();
         assert_eq!(requested.len(), 1);
@@ -255,9 +201,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_complete_day_costs_no_request() {
         let (source, archive) = (ScriptedSource::default(), MemoryArchive::default());
-        let store = TestStore::holding(days(1, 1));
+        let store = MemoryBackfill::holding(days(1, 1));
         run(&source, &archive, &store, DAY).await;
-        let again = TestStore::holding(days(1, 1));
+        let again = MemoryBackfill::holding(days(1, 1));
         run(&source, &archive, &again, DAY).await;
         assert_eq!(source.requested().len(), 2);
     }
@@ -266,7 +212,7 @@ mod tests {
     async fn no_data_and_denied_documents_are_recorded_and_the_day_advances() {
         let (source, archive) = (ScriptedSource::default(), MemoryArchive::default());
         source.script([Ok(Fetched::Denied), Ok(Fetched::Absent)]);
-        let store = TestStore::holding(days(1, 1));
+        let store = MemoryBackfill::holding(days(1, 1));
         assert_eq!(run(&source, &archive, &store, DAY).await, RunEnd::Done);
         assert_eq!(archive.stored(&key(jan(1), "a.json")), Some(Stored::Denied));
         assert_eq!(
@@ -280,7 +226,7 @@ mod tests {
         for error in [TestError::Session, TestError::Throttled, TestError::Other] {
             let (source, archive) = (ScriptedSource::default(), MemoryArchive::default());
             source.script([Ok(Fetched::Body(vec![1])), Err(error)]);
-            let store = TestStore::holding(days(1, 2));
+            let store = MemoryBackfill::holding(days(1, 2));
             assert_eq!(run(&source, &archive, &store, DAY).await, RunEnd::Stopped);
             assert_eq!(store.stored(), Some(days(1, 2)));
             assert_eq!(archive.count(), 1);
@@ -303,7 +249,7 @@ mod tests {
         };
         for (archive, fetches) in [(unavailable, 0), (unwritable, 1)] {
             let source = ScriptedSource::default();
-            let store = TestStore::holding(days(1, 2));
+            let store = MemoryBackfill::holding(days(1, 2));
             assert_eq!(run(&source, &archive, &store, DAY).await, RunEnd::Stopped);
             assert_eq!(source.requested().len(), fetches);
             assert_eq!(store.stored(), Some(days(1, 2)));
@@ -317,7 +263,7 @@ mod tests {
             ..ScriptedSource::default()
         };
         let archive = MemoryArchive::default();
-        let store = TestStore::holding(days(1, 1));
+        let store = MemoryBackfill::holding(days(1, 1));
         let end = run(&source, &archive, &store, Duration::from_secs(430)).await;
         assert_eq!(end, RunEnd::OutOfTime);
         assert_eq!(store.stored(), Some(days(1, 1)));
@@ -333,7 +279,7 @@ mod tests {
             ..ScriptedSource::default()
         };
         let archive = MemoryArchive::default();
-        let store = TestStore::holding(days(1, 2));
+        let store = MemoryBackfill::holding(days(1, 2));
         assert_eq!(run(&source, &archive, &store, DAY).await, RunEnd::Done);
         assert_eq!(source.opens(), 2);
         assert_eq!(archive.count(), 4);
@@ -342,9 +288,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn an_unreadable_cursor_skips_the_archive() {
         let source = ScriptedSource::default();
-        let store = TestStore {
+        let store = MemoryBackfill {
             load_fails: true,
-            ..TestStore::default()
+            ..MemoryBackfill::default()
         };
         let end = run(&source, &MemoryArchive::default(), &store, DAY).await;
         assert_eq!(end, RunEnd::Skipped);
