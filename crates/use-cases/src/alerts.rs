@@ -1,9 +1,10 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use domain::{
-    AlertState, Measurement, Metric, OfflineEvent, OfflineWatch, RoomName, SourceId,
-    TemperatureEvent, TemperatureWatch, Thermometer, Timestamp,
+    AlertKind, AlertState, Measurement, Metric, OfflineEvent, OfflineWatch, ResolvedAlert,
+    RoomName, SourceId, TemperatureEvent, TemperatureWatch, Thermometer, Timestamp,
 };
 use tracing::{error, info, warn};
 
@@ -19,10 +20,29 @@ enum Rule {
 
 const RULES: [Rule; 2] = [Rule::Offline, Rule::Temperature];
 
+/// Resolved alerts are kept this long after they ended.
+const HISTORY_KEPT: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
 #[derive(Debug, Clone, Copy)]
 enum Event {
     Offline(OfflineEvent),
     Temperature(TemperatureEvent),
+}
+
+impl Event {
+    const fn rule(self) -> Rule {
+        match self {
+            Self::Offline(_) => Rule::Offline,
+            Self::Temperature(_) => Rule::Temperature,
+        }
+    }
+}
+
+/// An alert from its first notification to its resolution.
+#[derive(Clone, Copy, PartialEq)]
+struct Episode {
+    kind: AlertKind,
+    since: Timestamp,
 }
 
 struct Watched {
@@ -52,6 +72,22 @@ impl Watched {
         }
     }
 
+    fn episode(&self, rule: Rule) -> Option<Episode> {
+        match rule {
+            Rule::Offline => self.offline.active().map(|alert| Episode {
+                kind: AlertKind::Offline,
+                since: alert.since,
+            }),
+            Rule::Temperature => {
+                let alert = self.temperature.as_ref()?.active()?;
+                Some(Episode {
+                    kind: alert.deviation.into(),
+                    since: alert.since,
+                })
+            }
+        }
+    }
+
     fn delivered(&mut self, event: Event, now: Timestamp) {
         match (event, self.temperature.as_mut()) {
             (Event::Offline(event), _) => self.offline.delivered(event, now),
@@ -66,6 +102,8 @@ pub struct Alerts {
     // A borrow is never held across an `.await`, so measurements can be
     // observed while a notification is being sent.
     sensors: RefCell<BTreeMap<SourceId, Watched>>,
+    // Resolved alerts, oldest first.
+    history: RefCell<Vec<ResolvedAlert>>,
     // Set when the last save failed; the next check saves again.
     unsaved: Cell<bool>,
 }
@@ -103,6 +141,7 @@ impl Alerts {
             .collect();
         Self {
             sensors: RefCell::new(sensors),
+            history: RefCell::new(state.history),
             unsaved: Cell::new(false),
         }
     }
@@ -134,8 +173,11 @@ impl Alerts {
         store: &S,
         now: C,
     ) {
+        if self.prune_history(now()) {
+            self.unsaved.set(true);
+        }
         if self.unsaved.get() {
-            self.save(store);
+            self.save(store, now());
         }
         let source_ids: Vec<SourceId> = self.sensors.borrow().keys().cloned().collect();
         for source_id in source_ids {
@@ -146,7 +188,7 @@ impl Alerts {
                 match notifier.notify(&notification).await {
                     Ok(()) => {
                         self.delivered(&source_id, event, now());
-                        self.save(store);
+                        self.save(store, now());
                     }
                     Err(error) => {
                         warn!(source_id = source_id.as_str(), %error, "notification failed, retrying at the next check");
@@ -167,12 +209,31 @@ impl Alerts {
 
     fn delivered(&self, source_id: &SourceId, event: Event, now: Timestamp) {
         if let Some(watched) = self.sensors.borrow_mut().get_mut(source_id) {
+            let rule = event.rule();
+            let before = watched.episode(rule);
             watched.delivered(event, now);
+            if let Some(ended) = before.filter(|episode| Some(*episode) != watched.episode(rule)) {
+                self.history.borrow_mut().push(ResolvedAlert {
+                    source_id: source_id.clone(),
+                    kind: ended.kind,
+                    started: ended.since,
+                    ended: now,
+                });
+            }
             info!(room = %watched.room, ?event, "notification delivered");
         }
     }
 
-    fn snapshot(&self) -> AlertState {
+    /// Drops history older than `HISTORY_KEPT`; true when something was dropped.
+    fn prune_history(&self, now: Timestamp) -> bool {
+        let mut history = self.history.borrow_mut();
+        let kept = history.len();
+        history.retain(|resolved| now.duration_since(resolved.ended) <= HISTORY_KEPT);
+        history.len() != kept
+    }
+
+    /// The active alerts and the history kept at `now`.
+    pub fn state(&self, now: Timestamp) -> AlertState {
         let sensors = self.sensors.borrow();
         let offline = sensors
             .iter()
@@ -187,12 +248,18 @@ impl Alerts {
         AlertState {
             offline,
             temperature,
-            history: Vec::new(),
+            history: self
+                .history
+                .borrow()
+                .iter()
+                .filter(|resolved| now.duration_since(resolved.ended) <= HISTORY_KEPT)
+                .cloned()
+                .collect(),
         }
     }
 
-    fn save<S: AlertStateStore>(&self, store: &S) {
-        match store.save(&self.snapshot()) {
+    fn save<S: AlertStateStore>(&self, store: &S, now: Timestamp) {
+        match store.save(&self.state(now)) {
             Ok(()) => self.unsaved.set(false),
             Err(error) => {
                 warn!(%error, "cannot save the alert state, retrying at the next check");
@@ -209,8 +276,9 @@ mod tests {
     use std::io;
 
     use domain::{
-        AlertState, Deviation, MacAddress, Measurement, Metric, OfflineAlert, RoomName, SourceKind,
-        TemperatureAlert, TemperatureRange, Thermometer, Timestamp,
+        AlertKind, AlertState, Deviation, MacAddress, Measurement, Metric, OfflineAlert,
+        ResolvedAlert, RoomName, SourceKind, TemperatureAlert, TemperatureRange, Thermometer,
+        Timestamp,
     };
 
     use crate::{AlertStateStore, Notification, Notifier};
@@ -223,6 +291,7 @@ mod tests {
     const START: i64 = 1_000_000_000_000;
     const MINUTE: i64 = 60;
     const HOUR: i64 = 3600;
+    const DAY: i64 = 24 * HOUR;
 
     struct FakeNotifier<H: Fn()> {
         failures_left: Cell<u32>,
@@ -419,6 +488,22 @@ mod tests {
             },
         );
         FakeStore::holding(state)
+    }
+
+    fn resolved(mac: MacAddress, kind: AlertKind, started: i64, ended: i64) -> ResolvedAlert {
+        ResolvedAlert {
+            source_id: mac.into(),
+            kind,
+            started: at(started),
+            ended: at(ended),
+        }
+    }
+
+    fn holding_history(history: Vec<ResolvedAlert>) -> FakeStore {
+        FakeStore::holding(AlertState {
+            history,
+            ..AlertState::default()
+        })
     }
 
     #[tokio::test]
@@ -825,5 +910,150 @@ mod tests {
         assert!(store.saved.borrow().is_empty());
         check(&alerts, &notifier, &store, 16 * MINUTE).await;
         assert_eq!(notifier.titles(), ["bedroom too hot"]);
+    }
+
+    #[tokio::test]
+    async fn an_offline_alert_is_recorded_when_back_is_delivered() {
+        let store = FakeStore::new();
+        let alerts = alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        alerts.observe(&[reading(MAC_OFFICE, 100 * HOUR)]);
+        check(&alerts, &notifier, &store, HOUR).await;
+        assert!(alerts.state(at(HOUR)).history.is_empty());
+        alerts.observe(&[reading(MAC_BEDROOM, HOUR + 10)]);
+        check(&alerts, &notifier, &store, HOUR + 20).await;
+        let expected = [resolved(MAC_BEDROOM, AlertKind::Offline, HOUR, HOUR + 20)];
+        assert_eq!(alerts.state(at(HOUR + 20)).history, expected);
+        assert_eq!(
+            store.saved.borrow().last().expect("saved").history,
+            expected
+        );
+    }
+
+    #[tokio::test]
+    async fn a_temperature_alert_is_recorded_when_resolved() {
+        let store = FakeStore::new();
+        let alerts = ranged_alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        too_hot(&alerts, &notifier, &store).await;
+        live(&alerts, 20 * MINUTE, 19.0);
+        live(&alerts, 35 * MINUTE, 19.0);
+        check(&alerts, &notifier, &store, 35 * MINUTE).await;
+        assert_eq!(
+            alerts.state(at(35 * MINUTE)).history,
+            [resolved(
+                MAC_BEDROOM,
+                AlertKind::TooHot,
+                15 * MINUTE,
+                35 * MINUTE
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn reminders_keep_the_onset_and_add_no_history() {
+        let store = FakeStore::new();
+        let alerts = ranged_alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        too_hot(&alerts, &notifier, &store).await;
+        let later = 15 * MINUTE + 12 * HOUR;
+        live(&alerts, later, 22.0);
+        check(&alerts, &notifier, &store, later).await;
+        assert_eq!(notifier.titles()[1], "bedroom still too hot");
+        let state = alerts.state(at(later));
+        assert_eq!(
+            state.temperature[&MAC_BEDROOM.into()].since,
+            at(15 * MINUTE)
+        );
+        assert!(state.history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn offline_reminders_keep_the_onset_and_add_no_history() {
+        let store = FakeStore::new();
+        let alerts = alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        alerts.observe(&[reading(MAC_OFFICE, 100 * HOUR)]);
+        check(&alerts, &notifier, &store, HOUR).await;
+        check(&alerts, &notifier, &store, 13 * HOUR).await;
+        assert_eq!(notifier.titles()[1], "bedroom thermometer still offline");
+        let state = alerts.state(at(13 * HOUR));
+        assert_eq!(state.offline[&MAC_BEDROOM.into()].since, at(HOUR));
+        assert!(state.history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_direction_switch_ends_one_alert_and_starts_the_next() {
+        let store = FakeStore::new();
+        let alerts = ranged_alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        too_hot(&alerts, &notifier, &store).await;
+        live(&alerts, HOUR, 16.0);
+        live(&alerts, HOUR + 15 * MINUTE, 16.0);
+        check(&alerts, &notifier, &store, HOUR + 15 * MINUTE).await;
+        assert_eq!(notifier.titles()[1], "bedroom too cold");
+        let state = alerts.state(at(HOUR + 15 * MINUTE));
+        assert_eq!(
+            state.history,
+            [resolved(
+                MAC_BEDROOM,
+                AlertKind::TooHot,
+                15 * MINUTE,
+                HOUR + 15 * MINUTE
+            )]
+        );
+        let cold = state.temperature[&MAC_BEDROOM.into()];
+        assert_eq!(cold.deviation, Deviation::TooCold);
+        assert_eq!(cold.since, at(HOUR + 15 * MINUTE));
+    }
+
+    #[tokio::test]
+    async fn a_failed_back_send_adds_no_history() {
+        let store = FakeStore::new();
+        let alerts = alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        alerts.observe(&[reading(MAC_OFFICE, 100 * HOUR)]);
+        check(&alerts, &notifier, &store, HOUR).await;
+        alerts.observe(&[reading(MAC_BEDROOM, HOUR + 10)]);
+        notifier.failures_left.set(1);
+        check(&alerts, &notifier, &store, HOUR + 20).await;
+        assert!(alerts.state(at(HOUR + 20)).history.is_empty());
+        check(&alerts, &notifier, &store, HOUR + 80).await;
+        assert_eq!(alerts.state(at(HOUR + 80)).history.len(), 1);
+    }
+
+    #[test]
+    fn history_older_than_thirty_days_is_left_out_of_the_state() {
+        let entry = resolved(MAC_BEDROOM, AlertKind::Offline, 0, 0);
+        let store = holding_history(vec![entry.clone()]);
+        let alerts = alerts(&store, 0);
+        assert_eq!(alerts.state(at(30 * DAY)).history, [entry]);
+        assert!(alerts.state(at(30 * DAY + 1)).history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn expired_history_leaves_the_file_even_in_a_quiet_period() {
+        let store = holding_history(vec![resolved(MAC_BEDROOM, AlertKind::Offline, 0, 0)]);
+        let alerts = alerts(&store, 30 * DAY);
+        let notifier = FakeNotifier::new();
+        alerts.observe(&[
+            reading(MAC_BEDROOM, 30 * DAY),
+            reading(MAC_OFFICE, 30 * DAY),
+        ]);
+        check(&alerts, &notifier, &store, 30 * DAY).await;
+        assert!(store.saved.borrow().is_empty());
+        check(&alerts, &notifier, &store, 30 * DAY + 1).await;
+        assert!(notifier.sent.borrow().is_empty());
+        assert_eq!(store.saved.borrow().len(), 1);
+        assert!(store.saved.borrow()[0].history.is_empty());
+        check(&alerts, &notifier, &store, 30 * DAY + 2).await;
+        assert_eq!(store.saved.borrow().len(), 1);
+    }
+
+    #[test]
+    fn a_restart_returns_the_persisted_history() {
+        let history = vec![resolved(MAC_OFFICE, AlertKind::TooCold, 10, 20)];
+        let store = holding_history(history.clone());
+        assert_eq!(alerts(&store, 100).state(at(100)).history, history);
     }
 }
