@@ -49,9 +49,15 @@ impl ActivityCursor {
     }
 
     /// After the catch-up page fetched at `offset` with `len` activities. A
-    /// short page, or one with nothing new on it, ends the catch-up.
+    /// short page ends the catch-up, and so does a page with nothing new on
+    /// it once the offset reached before an interruption is passed: the page
+    /// before that one is an overlap that is always stored.
     pub const fn after_catch_up_page(self, offset: u32, len: u32, all_stored: bool) -> Self {
-        let finished = all_stored || len < ACTIVITY_PAGE;
+        let past_checkpoint = match self.catch_up {
+            Some(reached) => offset >= reached,
+            None => true,
+        };
+        let finished = len < ACTIVITY_PAGE || (all_stored && past_checkpoint);
         Self {
             catch_up: if finished { None } else { Some(offset + len) },
             ..self
@@ -121,6 +127,23 @@ mod tests {
     }
 
     #[test]
+    fn a_stored_overlap_page_does_not_end_an_interrupted_catch_up() {
+        let cut = ActivityCursor {
+            start: 40,
+            done: true,
+            catch_up: Some(10),
+        };
+        let overlap = cut.after_catch_up_page(5, ACTIVITY_PAGE, true);
+        assert_eq!(overlap.catch_up, Some(10));
+        let next = overlap.after_catch_up_page(10, ACTIVITY_PAGE, false);
+        assert_eq!(next.catch_up, Some(15));
+        assert_eq!(
+            next.after_catch_up_page(15, ACTIVITY_PAGE, true).catch_up,
+            None
+        );
+    }
+
+    #[test]
     fn a_catch_up_ends_on_a_stored_or_short_page() {
         let cut = ActivityCursor {
             start: 40,
@@ -128,7 +151,7 @@ mod tests {
             catch_up: Some(10),
         };
         assert_eq!(
-            cut.after_catch_up_page(5, ACTIVITY_PAGE, true).catch_up,
+            cut.after_catch_up_page(10, ACTIVITY_PAGE, true).catch_up,
             None
         );
         assert_eq!(cut.after_catch_up_page(5, 2, false).catch_up, None);
