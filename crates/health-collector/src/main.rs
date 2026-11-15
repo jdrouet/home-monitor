@@ -16,12 +16,12 @@ use mqtt::MqttPublisher;
 use paris_clock::paris_date;
 use prompt::prompt_line;
 use schedule::{completed_day_stamp, next_pull, pull_days, wait_until};
-use state_file::{ArchiveDir, BackfillFile};
+use state_file::{ActivityCursorFile, ArchiveDir, BackfillFile};
 use tokio::net::TcpListener;
 use tokio::time::sleep;
 use use_cases::{
-    ArchiveDays, ArchiveSource, BackfillStore, HealthBackfill, HealthImport, Publisher, RawArchive,
-    collect_health, report_session,
+    ActivityCursorStore, ActivityImport, ArchiveDays, ArchiveSource, BackfillStore, HealthBackfill,
+    HealthImport, Publisher, RawArchive, collect_health, report_session,
 };
 
 const CLIENT_ID: &str = "health-collector";
@@ -82,6 +82,8 @@ async fn collect(mqtt: &MqttConfig, health: &HealthCollectorConfig) -> anyhow::R
         BackfillFile::new(health.token_file.with_file_name("garmin_backfill.json"));
     let gap_store = BackfillFile::new(health.token_file.with_file_name("garmin_gap.json"));
     let archive = ArchiveDir::new(health.archive_dir.clone());
+    let activity_store =
+        ActivityCursorFile::new(health.token_file.with_file_name("garmin_activities.json"));
     let archive_store = BackfillFile::new(health.token_file.with_file_name("garmin_archive.json"));
     let source_id = SourceId::from(GARMIN.to_owned());
     let import = HealthImport {
@@ -96,6 +98,11 @@ async fn collect(mqtt: &MqttConfig, health: &HealthCollectorConfig) -> anyhow::R
             publisher: &publisher,
             store: &backfill_store,
             source_id: &source_id,
+        },
+        activities: ActivityImport {
+            source: &provider,
+            archive: &archive,
+            store: &activity_store,
         },
         archive_days: ArchiveDays {
             source: &provider,
@@ -112,12 +119,19 @@ async fn collect(mqtt: &MqttConfig, health: &HealthCollectorConfig) -> anyhow::R
 /// Pulls at startup, then at every daily pull time. The next deadline is
 /// fixed before a pull starts, so a slow pull cannot skip it. A failed pull
 /// is not retried before the next one. Each pull reports the session status.
-/// After a completed pull the gap fill, the backfill and the archive run until
+/// After a completed pull the gap fill, the backfill, the activities and the
+/// archive days run until
 /// shortly before the next deadline.
-async fn pull_forever<H: ArchiveSource, P: Publisher, A: RawArchive, S: BackfillStore>(
+async fn pull_forever<
+    H: ArchiveSource,
+    P: Publisher,
+    A: RawArchive,
+    S: BackfillStore,
+    C: ActivityCursorStore,
+>(
     provider: &H,
     publisher: &P,
-    import: &HealthImport<'_, H, P, A, S>,
+    import: &HealthImport<'_, H, P, A, S, C>,
     source_id: &SourceId,
 ) -> Infallible {
     loop {

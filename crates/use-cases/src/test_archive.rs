@@ -10,8 +10,8 @@ use chrono::NaiveDate;
 use tokio::time::sleep;
 
 use crate::{
-    ACTIVITY_PAGE, ActivityRef, ArchiveKey, ArchiveSource, DailyHealth, DocumentKey, Fetched,
-    HealthProvider, RawArchive,
+    ACTIVITY_PAGE, ActivityCursor, ActivityCursorStore, ActivityRef, ArchiveKey, ArchiveSource,
+    DailyHealth, DocumentKey, Fetched, HealthProvider, RawArchive,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +53,10 @@ impl ScriptedSource {
 
     pub(crate) fn requested(&self) -> Vec<(&'static str, DocumentKey)> {
         self.requested.lock().expect("lock").clone()
+    }
+
+    pub(crate) fn pages(&self) -> Vec<(u32, u32)> {
+        self.pages.lock().expect("lock").clone()
     }
 
     pub(crate) fn script(&self, outcomes: impl IntoIterator<Item = Result<Fetched, TestError>>) {
@@ -151,6 +155,12 @@ impl MemoryArchive {
             .cloned()
     }
 
+    /// Marks `key` as stored, as an earlier run would have.
+    pub(crate) fn seed(&self, key: &ArchiveKey) {
+        self.insert(key, Stored::Document(Vec::new()))
+            .expect("seeding does not fail");
+    }
+
     pub(crate) fn count(&self) -> usize {
         self.entries.lock().expect("lock").len()
     }
@@ -183,5 +193,51 @@ impl RawArchive for MemoryArchive {
 
     fn put_denied(&self, key: &ArchiveKey) -> Result<(), io::Error> {
         self.insert(key, Stored::Denied)
+    }
+}
+
+/// An activity cursor in memory; the switches make its calls fail.
+#[derive(Default)]
+pub(crate) struct MemoryCursor {
+    pub load_fails: bool,
+    pub save_fails: bool,
+    pub stored: Mutex<Option<ActivityCursor>>,
+    pub saves: Mutex<Vec<ActivityCursor>>,
+}
+
+impl MemoryCursor {
+    pub(crate) fn holding(cursor: ActivityCursor) -> Self {
+        Self {
+            stored: Mutex::new(Some(cursor)),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn stored(&self) -> Option<ActivityCursor> {
+        *self.stored.lock().expect("lock")
+    }
+
+    pub(crate) fn saves(&self) -> Vec<ActivityCursor> {
+        self.saves.lock().expect("lock").clone()
+    }
+}
+
+impl ActivityCursorStore for MemoryCursor {
+    type Error = io::Error;
+
+    fn load(&self) -> Result<Option<ActivityCursor>, io::Error> {
+        if self.load_fails {
+            return Err(io::Error::other("corrupt"));
+        }
+        Ok(self.stored())
+    }
+
+    fn save(&self, cursor: &ActivityCursor) -> Result<(), io::Error> {
+        if self.save_fails {
+            return Err(io::Error::other("disk full"));
+        }
+        self.saves.lock().expect("lock").push(*cursor);
+        *self.stored.lock().expect("lock") = Some(*cursor);
+        Ok(())
     }
 }

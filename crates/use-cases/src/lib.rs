@@ -1,6 +1,7 @@
 mod activity_cursor;
 mod activity_cursor_store;
 mod activity_id;
+mod activity_import;
 mod activity_ref;
 mod advertisement;
 mod advertisement_source;
@@ -46,6 +47,7 @@ mod weather_report;
 pub use activity_cursor::{ACTIVITY_PAGE, ActivityCursor};
 pub use activity_cursor_store::ActivityCursorStore;
 pub use activity_id::ActivityId;
+pub use activity_import::ActivityImport;
 pub use activity_ref::ActivityRef;
 pub use advertisement::Advertisement;
 pub use advertisement_source::AdvertisementSource;

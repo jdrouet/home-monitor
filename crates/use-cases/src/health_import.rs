@@ -3,20 +3,23 @@ use domain::Timestamp;
 
 use crate::health_backfill::RunEnd;
 use crate::{
-    ArchiveDays, ArchiveSource, BackfillCursor, BackfillStore, HealthBackfill, HealthDay,
-    HealthPull, Publisher, RawArchive,
+    ActivityCursorStore, ActivityImport, ArchiveDays, ArchiveSource, BackfillCursor, BackfillStore,
+    HealthBackfill, HealthDay, HealthPull, Publisher, RawArchive,
 };
 
 /// What runs after a completed pull, in the same window: the gap fill of the
-/// days the daily pulls missed, the yearly backfill, then the archive of
-/// Garmin's original documents.
-pub struct HealthImport<'a, H, P, A, S> {
+/// days the daily pulls missed, the yearly backfill, the activities, then the
+/// days of Garmin's original documents.
+pub struct HealthImport<'a, H, P, A, S, C> {
     pub gap: HealthBackfill<'a, H, P, S>,
     pub yearly: HealthBackfill<'a, H, P, S>,
+    pub activities: ActivityImport<'a, H, A, C>,
     pub archive_days: ArchiveDays<'a, H, A, S>,
 }
 
-impl<H: ArchiveSource, P: Publisher, A: RawArchive, S: BackfillStore> HealthImport<'_, H, P, A, S> {
+impl<H: ArchiveSource, P: Publisher, A: RawArchive, S: BackfillStore, C: ActivityCursorStore>
+    HealthImport<'_, H, P, A, S, C>
+{
     /// Does nothing unless `pull` completed. A run that stopped on an error
     /// ends the chain: the runs after it would stop on the same error.
     pub async fn after_pull(
@@ -55,6 +58,9 @@ impl<H: ArchiveSource, P: Publisher, A: RawArchive, S: BackfillStore> HealthImpo
         if end == RunEnd::Stopped {
             return;
         }
+        if self.activities.run(until, &clock).await == RunEnd::Stopped {
+            return;
+        }
         self.archive_days
             .run(
                 |stored| BackfillCursor::rolling(stored, today, fetched),
@@ -74,10 +80,10 @@ mod tests {
     use domain::{Measurement, SourceId, SourceKind, Timestamp};
     use tokio::time::Instant;
 
-    use crate::test_archive::{MemoryArchive, ScriptedSource};
+    use crate::test_archive::{MemoryArchive, MemoryCursor, ScriptedSource};
     use crate::{
-        ArchiveDays, BackfillCursor, BackfillStore, HealthBackfill, HealthDay, HealthImport,
-        HealthPull, Publisher,
+        ActivityImport, ArchiveDays, BackfillCursor, BackfillStore, HealthBackfill, HealthDay,
+        HealthImport, HealthPull, Publisher,
     };
 
     struct TestPublisher;
@@ -122,6 +128,7 @@ mod tests {
         gap: TestStore,
         yearly: TestStore,
         archive: TestStore,
+        activities: MemoryCursor,
     }
 
     const START: i64 = 1_000_000_000_000_000;
@@ -157,6 +164,11 @@ mod tests {
                 publisher: &TestPublisher,
                 store: &stores.yearly,
                 source_id: &source_id,
+            },
+            activities: ActivityImport {
+                source,
+                archive,
+                store: &stores.activities,
             },
             archive_days: ArchiveDays {
                 source,
@@ -198,6 +210,7 @@ mod tests {
         let rolled = stores.archive.stored().expect("archive cursor");
         assert!(rolled.is_done());
         assert_eq!(rolled.last, yesterday());
+        assert!(stores.activities.stored().expect("activity cursor").done);
         assert_eq!(archive.count(), 365 * 2);
     }
 
@@ -218,6 +231,7 @@ mod tests {
             assert_eq!(stores.gap.stored(), None);
             assert_eq!(stores.yearly.stored(), None);
             assert_eq!(stores.archive.stored(), None);
+            assert_eq!(stores.activities.stored(), None);
         }
     }
 
@@ -232,7 +246,22 @@ mod tests {
         assert!(stores.gap.stored().is_some());
         assert_eq!(stores.yearly.stored(), None);
         assert_eq!(stores.archive.stored(), None);
+        assert_eq!(stores.activities.stored(), None);
         assert_eq!(source.opens(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stopped_activity_import_skips_the_archive_days() {
+        let source = ScriptedSource {
+            list_fails: true,
+            ..ScriptedSource::default()
+        };
+        let (archive, stores) = (MemoryArchive::default(), Stores::default());
+        after_pull(&source, &archive, &stores, completed()).await;
+        assert!(stores.yearly.stored().expect("yearly cursor").is_done());
+        assert!(!stores.activities.stored().expect("activity cursor").done);
+        assert_eq!(stores.archive.stored(), None);
+        assert!(source.requested().is_empty());
     }
 
     #[tokio::test(start_paused = true)]
