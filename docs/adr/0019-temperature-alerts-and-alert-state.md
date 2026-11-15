@@ -1,6 +1,6 @@
 # ADR-0019: Temperature alerts and durable alert state
 
-Status: accepted
+Status: accepted (alert state contents amended by ADR-0021)
 
 ## Context
 Issue #5 needs a notification when a room stays too hot or too cold, without
