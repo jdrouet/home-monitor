@@ -14,6 +14,7 @@ const PATH_ENV: &str = "HOME_MONITOR_CONFIG";
 const DEFAULT_PATH: &str = "config.toml";
 const DEFAULT_STATE_FILE: &str = "/data/alerts.json";
 const DEFAULT_TOKEN_FILE: &str = "/tokens/garmin_tokens.json";
+const DEFAULT_ARCHIVE_DIR: &str = "/archive/garmin";
 const DEFAULT_ALERTER_URL: &str = "http://alerter:8080";
 
 #[derive(Debug, Clone, Deserialize)]
@@ -89,10 +90,16 @@ pub struct HealthCollectorConfig {
     pub http_listen: SocketAddr,
     #[serde(default = "default_token_file")]
     pub token_file: PathBuf,
+    #[serde(default = "default_archive_dir")]
+    pub archive_dir: PathBuf,
 }
 
 fn default_token_file() -> PathBuf {
     PathBuf::from(DEFAULT_TOKEN_FILE)
+}
+
+fn default_archive_dir() -> PathBuf {
+    PathBuf::from(DEFAULT_ARCHIVE_DIR)
 }
 
 impl WeatherCollectorConfig {
@@ -229,6 +236,24 @@ mod tests {
         let config: Config = text.parse().expect("config is valid");
         let health = config.health_collector.expect("section is present");
         assert_eq!(health.token_file, Path::new("/var/garmin.json"));
+    }
+
+    #[test]
+    fn example_has_the_default_archive_dir() {
+        let config: Config = EXAMPLE.parse().expect("example is valid");
+        let health = config.health_collector.expect("section is present");
+        assert_eq!(health.archive_dir, Path::new("/archive/garmin"));
+    }
+
+    #[test]
+    fn archive_dir_can_be_set() {
+        let text = EXAMPLE.replace(
+            "[health_collector]\n",
+            "[health_collector]\narchive_dir = \"/mnt/garmin\"\n",
+        );
+        let config: Config = text.parse().expect("config is valid");
+        let health = config.health_collector.expect("section is present");
+        assert_eq!(health.archive_dir, Path::new("/mnt/garmin"));
     }
 
     #[test]
