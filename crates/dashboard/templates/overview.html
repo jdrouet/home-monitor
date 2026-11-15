@@ -1,42 +1,77 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="60">
-<title>Room climate</title>
-</head>
-<body>
-<h1>Room climate</h1>
-<p><a href="/history">History</a> <a href="/alerts">Alerts</a> <a href="/health">Health</a></p>
-{% macro reading(r) %}
-<p>{% if let Some(t) = r.temperature %}{{ "{:.1}"|format(t) }} °C{% else %}—{% endif %}</p>
-<p>{% if let Some(h) = r.humidity %}{{ "{:.1}"|format(h) }} %{% else %}—{% endif %}</p>
-{% if r.freshness == Freshness::NotReporting %}<p>not reporting</p>{% endif %}
+{% extends "base.html" %}
+{% import "macros.html" as macros %}
+{% macro missing() %}<span aria-hidden="true">—</span><span class="visually-hidden">no reading</span>{% endmacro %}
+{% macro metric(r) %}
+<p class="metric">{% if let Some(t) = r.temperature %}<span class="metric-value">{{ "{:.1}"|format(t) }}</span><span class="metric-unit">°C</span>{% else %}<span class="metric-value">{% call missing() %}{% endcall %}</span>{% endif %}{% if r.freshness == Freshness::NotReporting %}<span class="badge badge--warn">Not reporting</span>{% endif %}</p>
 {% endmacro %}
+{% macro humidity(r) %}
+<p class="secondary">{% if let Some(h) = r.humidity %}{{ "{:.1}"|format(h) }} % humidity{% else %}{% call missing() %}{% endcall %}{% endif %}</p>
+{% endmacro %}
+{% macro card(title, r, mono) %}
+<div class="card{% if r.freshness == Freshness::NotReporting %} card--stale{% endif %}">
+<h3{% if mono %} class="mono"{% endif %}>{{ title }}</h3>
+{% call metric(r) %}{% endcall %}
+{% if r.temperature.is_some() || r.humidity.is_some() %}
+{% call humidity(r) %}{% endcall %}
+{% endif %}
+</div>
+{% endmacro %}
+{% block meta %}<span>Updated {{ updated }}</span>{% endblock %}
+{% block content %}
 <section>
-<h2>Outside</h2>
-{% if overview.outdoor.reading.freshness == Freshness::Reporting %}
-{% call reading(overview.outdoor.reading) %}{% endcall %}
-<p>Today: {% if let Some(summary) = overview.outdoor.summary %}{{ summary }}{% else %}—{% endif %} {% if let Some(min) = overview.outdoor.temperature_min %}{{ "{:.1}"|format(min) }}{% else %}—{% endif %}–{% if let Some(max) = overview.outdoor.temperature_max %}{{ "{:.1}"|format(max) }}{% else %}—{% endif %} °C</p>
+<h2 class="visually-hidden">Active alerts</h2>
+{% if let Some(alerts) = alerts %}
+{% if alerts.active.is_empty() %}
+<p class="notice">No active alerts.</p>
 {% else %}
-<p>Weather unavailable</p>
+<ul class="alert-list alert-list--compact">
+{% for line in self.shown_alerts() %}
+{% call macros::active_alert(line) %}{% endcall %}
+{% endfor %}
+{% if self.more_alerts() > 0 %}
+<li class="alert-more"><a href="/alerts">{{ self.more_alerts() }} more active alerts</a></li>
+{% endif %}
+</ul>
+{% endif %}
+{% else %}
+<p class="notice notice--warn"><span class="badge badge--warn">Unavailable</span> <strong>Alerts unavailable.</strong> The alerter did not respond; room values below are current.</p>
 {% endif %}
 </section>
+{% if let Some(overview) = overview %}
+<section>
+<h2 class="visually-hidden">Rooms and weather</h2>
+<div class="card-grid">
 {% for room in overview.rooms %}
-<section>
-<h2>{{ room.room }}</h2>
-{% call reading(room.reading) %}{% endcall %}
+{% call card(room.room, room.reading, false) %}{% endcall %}
+{% endfor %}
+<div class="card card--wide{% if overview.outdoor.reading.freshness == Freshness::NotReporting %} card--stale{% endif %}">
+<h3>Outside{% if overview.outdoor.reading.freshness == Freshness::NotReporting %} <span class="badge badge--warn">Not reporting</span>{% endif %}</h3>
+{% if overview.outdoor.reading.freshness == Freshness::Reporting %}
+<div class="outside-readings">
+{% call metric(overview.outdoor.reading) %}{% endcall %}
+{% call humidity(overview.outdoor.reading) %}{% endcall %}
+</div>
+<p class="secondary">{% if let Some(summary) = overview.outdoor.summary %}{{ summary }}{% else %}{% call missing() %}{% endcall %}{% endif %} · today {% if let Some(min) = overview.outdoor.temperature_min %}{{ "{:.1}"|format(min) }}{% else %}{% call missing() %}{% endcall %}{% endif %}–{% if let Some(max) = overview.outdoor.temperature_max %}{{ "{:.1}"|format(max) }}{% else %}{% call missing() %}{% endcall %}{% endif %} °C</p>
+{% else %}
+<p class="secondary">Weather unavailable</p>
+{% endif %}
+</div>
+</div>
 </section>
-{% endfor %}
 {% if !overview.unknown_sensors.is_empty() %}
-<section>
-<h2>Unknown sensors</h2>
+<section class="unknown-sensors">
+<h2 class="section-heading">Unknown sensors</h2>
+<p class="secondary">Not assigned to a room in config.toml.</p>
+<div class="card-grid">
 {% for sensor in overview.unknown_sensors %}
-<h3>{{ sensor.source_id.as_str() }}</h3>
-{% call reading(sensor.reading) %}{% endcall %}
+{% call card(sensor.source_id.as_str(), sensor.reading, true) %}{% endcall %}
 {% endfor %}
+</div>
 </section>
 {% endif %}
-</body>
-</html>
+{% else %}
+<section>
+<p class="notice notice--warn"><span class="badge badge--warn">Unavailable</span> <strong>Room values unavailable.</strong> The store did not respond. This page retries every minute.</p>
+</section>
+{% endif %}
+{% endblock %}

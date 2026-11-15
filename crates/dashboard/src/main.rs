@@ -5,7 +5,10 @@ mod health_page;
 mod history_page;
 mod history_params;
 mod overview_page;
+mod page;
 mod paris_time;
+#[cfg(test)]
+mod preview;
 mod store_client;
 mod uplot_assets;
 
@@ -15,8 +18,7 @@ use std::sync::Arc;
 use alerter_client::AlerterClient;
 use axum::Router;
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::routing::get;
 use config::Config;
 use domain::{Measurement, SeriesQuery, Thermometer, Timestamp};
@@ -75,21 +77,17 @@ async fn serve(address: SocketAddr, app: Router) -> std::io::Result<()> {
 }
 
 async fn overview(State(state): State<Arc<AppState>>) -> Response {
-    match state.store.latest().await {
-        Ok(latest) => {
-            let now = Timestamp::now();
-            overview_page::render(&build_overview(
-                &state.thermometers,
-                &latest,
-                now,
-                paris_day_start(now),
-            ))
-        }
-        Err(error) => {
-            error!(%error, "cannot read latest values from the store");
-            (StatusCode::BAD_GATEWAY, "store unavailable").into_response()
-        }
-    }
+    let now = Timestamp::now();
+    let (latest, alerts) = tokio::join!(state.store.latest(), state.alerter.alerts());
+    let overview = latest
+        .inspect_err(|error| error!(%error, "cannot read latest values from the store"))
+        .ok()
+        .map(|latest| build_overview(&state.thermometers, &latest, now, paris_day_start(now)));
+    let summary = alerts
+        .inspect_err(|error| error!(%error, "cannot read the alerts from the alerter"))
+        .ok()
+        .map(|alerts| build_alert_summary(&state.thermometers, &alerts));
+    overview_page::render(overview.as_ref(), summary.as_ref(), now)
 }
 
 async fn history(
@@ -98,40 +96,36 @@ async fn history(
 ) -> Response {
     let selection = history_params::parse(&pairs, &state.thermometers);
     let now = Timestamp::now();
-    match state.store.series(&history_query(&selection, now)).await {
-        Ok(rows) => {
-            let chart = build_history(&state.thermometers, &selection, now, &rows);
-            history_page::render(&selection, &state.thermometers, &chart)
-        }
-        Err(error) => {
-            error!(%error, "cannot read the series from the store");
-            (StatusCode::BAD_GATEWAY, "store unavailable").into_response()
-        }
-    }
+    let chart = state
+        .store
+        .series(&history_query(&selection, now))
+        .await
+        .inspect_err(|error| error!(%error, "cannot read the series from the store"))
+        .ok()
+        .map(|rows| build_history(&state.thermometers, &selection, now, &rows));
+    history_page::render(&selection, &state.thermometers, chart.as_ref())
 }
 
 async fn alerts(State(state): State<Arc<AppState>>) -> Response {
-    match state.alerter.alerts().await {
-        Ok(alert_state) => {
-            let summary = build_alert_summary(&state.thermometers, &alert_state);
-            alerts_page::render(Some(&summary))
-        }
-        Err(error) => {
-            error!(%error, "cannot read the alerts from the alerter");
-            (StatusCode::BAD_GATEWAY, alerts_page::render(None)).into_response()
-        }
-    }
+    let now = Timestamp::now();
+    let summary = state
+        .alerter
+        .alerts()
+        .await
+        .inspect_err(|error| error!(%error, "cannot read the alerts from the alerter"))
+        .ok()
+        .map(|alert_state| build_alert_summary(&state.thermometers, &alert_state));
+    alerts_page::render(summary.as_ref(), now)
 }
 
 async fn health(State(state): State<Arc<AppState>>) -> Response {
     let days = health_days(Timestamp::now(), HEALTH_DAYS);
-    match health_measurements(&state.store, &days).await {
-        Ok(measurements) => health_page::render(&build_health(&days, &measurements)),
-        Err(error) => {
-            error!(%error, "cannot read the health series from the store");
-            (StatusCode::BAD_GATEWAY, "store unavailable").into_response()
-        }
-    }
+    let rows = health_measurements(&state.store, &days)
+        .await
+        .inspect_err(|error| error!(%error, "cannot read the health series from the store"))
+        .ok()
+        .map(|measurements| build_health(&days, &measurements));
+    health_page::render(rows.as_deref())
 }
 
 /// One store query per health metric over all of `days`, run in turn.
@@ -163,16 +157,26 @@ async fn health_measurements(
 mod tests {
     use std::sync::Arc;
 
-    use axum::body::to_bytes;
-    use axum::extract::State;
+    use axum::extract::{Query, State};
     use axum::http::StatusCode;
     use config::Config;
     use reqwest::Url;
 
     use crate::alerter_client::AlerterClient;
+    use crate::page::read;
     use crate::store_client::StoreClient;
 
-    use super::{AppState, alerts, app, health};
+    use super::{AppState, alerts, app, health, history, overview};
+
+    /// A state whose store and alerter refuse every connection.
+    fn unreachable_state() -> Arc<AppState> {
+        let unreachable = Url::parse("http://127.0.0.1:1/").expect("valid url");
+        Arc::new(AppState {
+            store: StoreClient::new(unreachable.clone(), unreachable.clone()),
+            alerter: AlerterClient::new(unreachable),
+            thermometers: Vec::new(),
+        })
+    }
 
     const EXAMPLE: &str = include_str!("../../../config.example.toml");
 
@@ -184,30 +188,35 @@ mod tests {
 
     #[tokio::test]
     async fn an_unreachable_alerter_is_a_bad_gateway_with_a_notice() {
-        let unreachable = Url::parse("http://127.0.0.1:1/alerts").expect("valid url");
-        let state = Arc::new(AppState {
-            store: StoreClient::new(unreachable.clone(), unreachable.clone()),
-            alerter: AlerterClient::new(unreachable),
-            thermometers: Vec::new(),
-        });
-        let response = alerts(State(state)).await;
-        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-        let bytes = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("body reads");
-        let html = String::from_utf8(bytes.to_vec()).expect("utf-8 body");
+        let state = unreachable_state();
+        let (status, html) = read(alerts(State(state)).await).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert!(html.contains("Alerts unavailable"));
     }
 
     #[tokio::test]
+    async fn an_unreachable_store_and_alerter_render_both_notices() {
+        let state = unreachable_state();
+        let (status, html) = read(overview(State(state)).await).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        let alerts = html.find("Alerts unavailable").expect("alerts notice");
+        let rooms = html.find("Room values unavailable").expect("rooms notice");
+        assert!(alerts < rooms);
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_store_is_a_bad_gateway_on_the_history_page() {
+        let state = unreachable_state();
+        let (status, html) = read(history(State(state), Query(Vec::new())).await).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(html.contains("History unavailable"));
+    }
+
+    #[tokio::test]
     async fn an_unreachable_store_is_a_bad_gateway_on_the_health_page() {
-        let unreachable = Url::parse("http://127.0.0.1:1/series").expect("valid url");
-        let state = Arc::new(AppState {
-            store: StoreClient::new(unreachable.clone(), unreachable.clone()),
-            alerter: AlerterClient::new(unreachable),
-            thermometers: Vec::new(),
-        });
-        let response = health(State(state)).await;
-        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let state = unreachable_state();
+        let (status, html) = read(health(State(state)).await).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(html.contains("Health data unavailable"));
     }
 }

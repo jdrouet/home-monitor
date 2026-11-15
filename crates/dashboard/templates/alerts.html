@@ -1,34 +1,35 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="60">
-<title>Alerts</title>
-</head>
-<body>
-<h1>Alerts</h1>
-<p><a href="/">Overview</a> <a href="/history">History</a> <a href="/health">Health</a></p>
-{% macro kind(k) %}{% match k %}{% when AlertKind::Offline %}offline{% when AlertKind::TooHot %}too hot{% when AlertKind::TooCold %}too cold{% when AlertKind::GarminLogin %}login expired{% endmatch %}{% endmacro %}
+{% extends "base.html" %}
+{% import "macros.html" as macros %}
+{% block meta %}<span>Updated {{ updated }}</span>{% endblock %}
+{% block content %}
 {% if let Some(summary) = summary %}
 <section>
-<h2>Active</h2>
-{% for line in summary.active %}
-<p>{{ line.subject }}: {% call kind(line.kind) %}{% endcall %}{% if let Some(celsius) = line.celsius %}, {{ "{:.1}"|format(celsius) }} °C at last notification{% endif %}, since {{ self.time(line.since) }}</p>
+<h2 class="section-heading">Active ({{ summary.active.len() }})</h2>
+{% if summary.active.is_empty() %}
+<p class="notice">No active alerts.</p>
 {% else %}
-<p>No active alerts.</p>
+<ul class="alert-list">
+{% for line in summary.active %}
+{% call macros::active_alert(line) %}{% endcall %}
 {% endfor %}
+</ul>
+{% endif %}
 </section>
 <section>
-<h2>Resolved in the last 30 days</h2>
-{% for line in summary.resolved %}
-<p>{{ line.subject }}: {% call kind(line.kind) %}{% endcall %}, from {{ self.time(line.started) }} to {{ self.time(line.ended) }}</p>
+<h2 class="section-heading">Resolved in the last 30 days</h2>
+{% if summary.resolved.is_empty() %}
+<p class="notice">No alerts resolved in the last 30 days.</p>
 {% else %}
-<p>No alerts resolved in the last 30 days.</p>
+<ul class="alert-list">
+{% for line in summary.resolved %}
+<li><span class="badge badge--neutral">{% call macros::alert_kind(line.kind) %}{% endcall %}</span><strong class="alert-subject">{{ line.subject }}</strong><span class="alert-time">{{ crate::paris_time::paris_time(*line.started) }} – {{ crate::paris_time::paris_time(*line.ended) }}</span></li>
 {% endfor %}
+</ul>
+{% endif %}
 </section>
 {% else %}
-<p>Alerts unavailable</p>
+<section>
+<p class="notice notice--warn"><span class="badge badge--warn">Unavailable</span> <strong>Alerts unavailable.</strong> The alerter did not respond. This page retries every minute.</p>
+</section>
 {% endif %}
-</body>
-</html>
+{% endblock %}

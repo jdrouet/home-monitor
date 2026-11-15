@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en"{% if let Some(secs) = page.refresh_secs() %} data-refresh="{{ secs }}"{% endif %}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{ page.label() }} · Home monitor</title>
+<style>{{ crate::page::APP_CSS|safe }}</style>
+{% if page.refresh_secs().is_some() %}
+<script>
+(function () {
+  var period = Number(document.documentElement.dataset.refresh) * 1000;
+  var loaded = Date.now();
+  function check() {
+    if (document.visibilityState !== "visible" || Date.now() - loaded < period - 500) return;
+    var active = document.activeElement;
+    if (!(active && active.matches("input,select,textarea,[contenteditable]"))) location.reload();
+  }
+  setInterval(check, period);
+  document.addEventListener("visibilitychange", check);
+})();
+</script>
+{% endif %}
+{% block head %}{% endblock %}
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="app-header"><nav aria-label="Main">
+<span class="brand">Home monitor</span>
+<ul>
+{% for p in crate::page::Page::ALL %}
+<li><a href="{{ p.href() }}"{% if p == page %} aria-current="page"{% endif %}>{{ p.label() }}</a></li>
+{% endfor %}
+</ul>
+</nav></header>
+<main id="main">
+<div class="page-header"><h1>{{ page.label() }}</h1>{% block meta %}{% endblock %}</div>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

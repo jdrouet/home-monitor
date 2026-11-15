@@ -1,49 +1,86 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Room climate history</title>
+{% extends "base.html" %}
+{% block head %}
 <link rel="stylesheet" href="/assets/uplot-1.6.32.min.css">
 <script src="/assets/uplot-1.6.32.min.js"></script>
-</head>
-<body>
-<h1>Room climate history</h1>
-<p><a href="/">Overview</a> <a href="/alerts">Alerts</a> <a href="/health">Health</a></p>
-<form method="get" action="/history">
-<label>Metric
-<select name="metric">
+{% endblock %}
+{% macro metric_label(m) %}{% match m %}{% when Metric::Temperature %}Temperature{% when Metric::Humidity %}Humidity{% else %}{{ m.as_str() }}{% endmatch %}{% endmacro %}
+{% macro period_label(p) %}{% match p %}{% when Period::Day %}24 h{% when Period::Week %}7 d{% when Period::Month %}30 d{% when Period::Year %}1 y{% endmatch %}{% endmacro %}
+{% macro period_long(p) %}{% match p %}{% when Period::Day %}24 hours{% when Period::Week %}7 days{% when Period::Month %}30 days{% when Period::Year %}year{% endmatch %}{% endmacro %}
+{% block content %}
+<form class="history-form" method="get" action="/history">
+<fieldset>
+<legend>Metric</legend>
+<div class="segments">
 {% for metric in metrics %}
-<option value="{{ metric.as_str() }}"{% if *metric == selection.metric %} selected{% endif %}>{{ metric.as_str() }}</option>
+<label><input type="radio" name="metric" value="{{ metric.as_str() }}"{% if *metric == selection.metric %} checked{% endif %}><span>{% call metric_label(metric) %}{% endcall %}</span></label>
 {% endfor %}
-</select>
-</label>
-<label>Period
-<select name="period">
+</div>
+</fieldset>
+<fieldset>
+<legend>Period</legend>
+<div class="segments">
 {% for period in periods %}
-<option value="{{ period.as_str() }}"{% if *period == selection.period %} selected{% endif %}>{{ period.as_str() }}</option>
+<label><input type="radio" name="period" value="{{ period.as_str() }}"{% if *period == selection.period %} checked{% endif %}><span>{% call period_label(period) %}{% endcall %}</span></label>
 {% endfor %}
-</select>
-</label>
+</div>
+</fieldset>
+<fieldset>
+<legend>Lines</legend>
+<div class="chips">
 {% for thermometer in thermometers %}
-<label><input type="checkbox" name="room" value="{{ thermometer.room }}"{% if selection.shows_room(thermometer.room) %} checked{% endif %}> {{ thermometer.room }}</label>
+<label class="chip"><input type="checkbox" name="room" value="{{ thermometer.room }}"{% if selection.shows_room(thermometer.room) %} checked{% endif %}> {{ thermometer.room }}</label>
 {% endfor %}
-<label><input type="checkbox" name="outside" value="on"{% if selection.include_outside %} checked{% endif %}> Outside</label>
-<button type="submit">Show</button>
+<label class="chip"><input type="checkbox" name="outside" value="on"{% if selection.include_outside %} checked{% endif %}> Outside</label>
+</div>
+</fieldset>
+<button class="button" type="submit">Update chart</button>
 </form>
+<section class="chart-card">
+<h2 class="section-heading">{% call metric_label(selection.metric) %}{% endcall %}, last {% call period_long(selection.period) %}{% endcall %}</h2>
+{% if let Some(chart) = chart %}
+{% if self.has_readings() %}
 <div id="chart"></div>
 <script>
 const labels = {{ chart.labels|json|safe }};
 const timestamps = {{ chart.timestamps|json|safe }};
 const lines = {{ chart.lines|json|safe }};
-const palette = ["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd", "#8c564b", "#e377c2", "#17becf"];
 const element = document.getElementById("chart");
-new uPlot({
-  width: Math.max(300, element.clientWidth),
-  height: 360,
-  tzDate: (ts) => uPlot.tzDate(new Date(ts * 1000), "Europe/Paris"),
-  series: [{}].concat(labels.map((label, i) => ({ label: label, stroke: palette[i % palette.length], width: 2 }))),
-}, [timestamps].concat(lines), element);
+const style = getComputedStyle(document.documentElement);
+const token = (name) => style.getPropertyValue(name).trim();
+let plot = null;
+const width = () => Math.max(200, element.clientWidth);
+const height = () => (window.matchMedia("(min-width: 48rem)").matches ? 360 : 240);
+function draw() {
+  if (plot) plot.destroy();
+  const muted = token("--text-muted");
+  const grid = { stroke: token("--border"), width: 1 };
+  const axis = { stroke: muted, grid: grid, ticks: grid };
+  let rooms = 0;
+  const series = labels.map((label) => {
+    if (label === "Outside") return { label: label, stroke: muted, width: 2, dash: [6, 4] };
+    const i = rooms++;
+    return { label: label, stroke: token("--chart-" + (i % 8 + 1)), width: 2, dash: i % 2 ? [6, 4] : [] };
+  });
+  plot = new uPlot({
+    width: width(),
+    height: height(),
+    tzDate: (ts) => uPlot.tzDate(new Date(ts * 1000), "Europe/Paris"),
+    axes: [axis, axis],
+    series: [{}].concat(series),
+  }, [timestamps].concat(lines), element);
+}
+function resize() {
+  if (width() !== plot.width || height() !== plot.height) plot.setSize({ width: width(), height: height() });
+}
+window.addEventListener("resize", resize);
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+draw();
 </script>
-</body>
-</html>
+{% else %}
+<p class="notice"><strong>No readings in this period.</strong> Try a longer period or other rooms.</p>
+{% endif %}
+{% else %}
+<p class="notice notice--warn"><span class="badge badge--warn">Unavailable</span> <strong>History unavailable.</strong> The store did not respond. Try again in a minute.</p>
+{% endif %}
+</section>
+{% endblock %}
