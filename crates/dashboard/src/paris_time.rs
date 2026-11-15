@@ -5,13 +5,19 @@ use domain::Timestamp;
 /// `at` as `YYYY-MM-DD HH:MM` on the Europe/Paris clock; `—` for an instant
 /// outside the calendar range.
 pub fn paris_time(at: Timestamp) -> String {
+    format_paris(at, "%Y-%m-%d %H:%M")
+}
+
+/// `at` as `HH:MM` on the Europe/Paris clock; `—` for an instant outside the
+/// calendar range.
+pub fn paris_hour_minute(at: Timestamp) -> String {
+    format_paris(at, "%H:%M")
+}
+
+fn format_paris(at: Timestamp, format: &str) -> String {
     DateTime::from_timestamp_micros(at.as_micros()).map_or_else(
         || "—".to_owned(),
-        |utc| {
-            utc.with_timezone(&Paris)
-                .format("%Y-%m-%d %H:%M")
-                .to_string()
-        },
+        |utc| utc.with_timezone(&Paris).format(format).to_string(),
     )
 }
 
@@ -20,7 +26,7 @@ mod tests {
     use chrono::DateTime;
     use domain::Timestamp;
 
-    use super::paris_time;
+    use super::{paris_hour_minute, paris_time};
 
     fn at(rfc3339: &str) -> Timestamp {
         let instant = DateTime::parse_from_rfc3339(rfc3339).expect("valid instant");
@@ -40,5 +46,20 @@ mod tests {
     #[test]
     fn an_instant_out_of_range_does_not_panic() {
         assert_eq!(paris_time(Timestamp::from_micros(i64::MAX)), "—");
+    }
+
+    #[test]
+    fn the_hour_and_minute_follow_winter_time() {
+        assert_eq!(paris_hour_minute(at("2026-01-15T12:30:00Z")), "13:30");
+    }
+
+    #[test]
+    fn the_hour_and_minute_follow_summer_time() {
+        assert_eq!(paris_hour_minute(at("2026-07-15T23:30:00Z")), "01:30");
+    }
+
+    #[test]
+    fn the_hour_and_minute_of_an_out_of_range_instant_is_a_dash() {
+        assert_eq!(paris_hour_minute(Timestamp::from_micros(i64::MAX)), "—");
     }
 }

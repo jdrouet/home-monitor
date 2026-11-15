@@ -1,0 +1,1 @@
+{% macro alert_kind(kind) %}{% match kind %}{% when AlertKind::Offline %}Offline{% when AlertKind::TooHot %}Too hot{% when AlertKind::TooCold %}Too cold{% when AlertKind::GarminLogin %}Login expired{% endmatch %}{% endmacro %}

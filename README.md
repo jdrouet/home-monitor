@@ -73,7 +73,8 @@ The dashboard's Alerts page lists the active alerts and those resolved in the
 last 30 days. `alerter` keeps that history in the same state file and serves it
 on its `http_listen` port; the dashboard reads it from `[dashboard] alerter_url`
 (default `http://alerter:8080`). Update every image before setting
-`alerter_url`: older images reject the key. See
+`alerter_url`: older images reject the key. The overview lists the active
+alerts first and still shows the rooms when the alerter is down. See
 [ADR-0021](docs/adr/0021-alert-history-and-alerts-page.md).
 
 ## Update

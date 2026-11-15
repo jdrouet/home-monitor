@@ -76,21 +76,17 @@ async fn serve(address: SocketAddr, app: Router) -> std::io::Result<()> {
 }
 
 async fn overview(State(state): State<Arc<AppState>>) -> Response {
-    match state.store.latest().await {
-        Ok(latest) => {
-            let now = Timestamp::now();
-            overview_page::render(&build_overview(
-                &state.thermometers,
-                &latest,
-                now,
-                paris_day_start(now),
-            ))
-        }
-        Err(error) => {
-            error!(%error, "cannot read latest values from the store");
-            (StatusCode::BAD_GATEWAY, "store unavailable").into_response()
-        }
-    }
+    let now = Timestamp::now();
+    let (latest, alerts) = tokio::join!(state.store.latest(), state.alerter.alerts());
+    let overview = latest
+        .inspect_err(|error| error!(%error, "cannot read latest values from the store"))
+        .ok()
+        .map(|latest| build_overview(&state.thermometers, &latest, now, paris_day_start(now)));
+    let summary = alerts
+        .inspect_err(|error| error!(%error, "cannot read the alerts from the alerter"))
+        .ok()
+        .map(|alerts| build_alert_summary(&state.thermometers, &alerts));
+    overview_page::render(overview.as_ref(), summary.as_ref(), now)
 }
 
 async fn history(
@@ -173,7 +169,7 @@ mod tests {
     use crate::alerter_client::AlerterClient;
     use crate::store_client::StoreClient;
 
-    use super::{AppState, alerts, app, health};
+    use super::{AppState, alerts, app, health, overview};
 
     const EXAMPLE: &str = include_str!("../../../config.example.toml");
 
@@ -198,6 +194,25 @@ mod tests {
             .expect("body reads");
         let html = String::from_utf8(bytes.to_vec()).expect("utf-8 body");
         assert!(html.contains("Alerts unavailable"));
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_store_and_alerter_render_both_notices() {
+        let unreachable = Url::parse("http://127.0.0.1:1/latest").expect("valid url");
+        let state = Arc::new(AppState {
+            store: StoreClient::new(unreachable.clone(), unreachable.clone()),
+            alerter: AlerterClient::new(unreachable),
+            thermometers: Vec::new(),
+        });
+        let response = overview(State(state)).await;
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body reads");
+        let html = String::from_utf8(bytes.to_vec()).expect("utf-8 body");
+        let alerts = html.find("Alerts unavailable").expect("alerts notice");
+        let rooms = html.find("Room values unavailable").expect("rooms notice");
+        assert!(alerts < rooms);
     }
 
     #[tokio::test]
