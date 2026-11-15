@@ -172,16 +172,9 @@ main > section + section { margin-top: var(--space-5); }
   padding: var(--space-2) var(--space-3);
 }
 .alert-list li + li { border-top: 1px solid var(--border); }
-.alert-subject { font-weight: 600; }
-.alert-list--compact li { flex-wrap: nowrap; }
-.alert-list--compact .badge { flex: none; }
-.alert-list--compact .alert-subject {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.alert-time { margin-left: auto; white-space: nowrap; }
+.alert-list .badge { flex: none; }
+.alert-subject { flex: 1 1 0; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.alert-time { order: 2; flex-basis: 100%; white-space: nowrap; }
 .alert-list--compact .alert-detail { display: none; }
 .alert-list:not(.alert-list--compact) .alert-detail { order: 1; flex-basis: 100%; }
 .section-heading + .alert-list, .section-heading + .notice { margin-top: var(--space-3); }
@@ -329,6 +322,8 @@ main > section + section { margin-top: var(--space-5); }
   .history-form .button { width: auto; }
   .alert-list--compact .alert-detail { display: inline; }
   .alert-list:not(.alert-list--compact) .alert-detail { order: 0; flex-basis: auto; }
+  .alert-subject { flex: 0 1 auto; }
+  .alert-time { order: 0; flex-basis: auto; margin-left: auto; }
   .card-grid { grid-template-columns: repeat(auto-fill, minmax(min(12rem, 100%), 1fr)); }
   .card--wide { grid-column: span 2; }
   main { padding: var(--space-5); }

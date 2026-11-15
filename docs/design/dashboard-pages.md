@@ -78,24 +78,24 @@ does not add to the store's time.
 
 Vertical budget, in CSS px, from the stylesheet and not measured on a device:
 nav 48, page top padding 16, header 40 (title 24 and a 16 gap), alerts 48
-(the "No alerts" notice) or 141 (three rows of 46), gap 24, rooms (3 rows of
+(the "No alerts" notice) or 229 (three rows of 75), gap 24, rooms (3 rows of
 103, with 2 gaps of 12) 332, gap 24, outside 111, bottom padding 16. The
-total is about 658 px with no alerts and 751 px with three alert rows and six
-rooms. With four rooms it is about 544 px and 637 px.
+total is about 658 px with no alerts and 839 px with three alert rows and six
+rooms. With four rooms it is about 544 px and 725 px.
 
 The target is a visible height of about 690 px. Chrome on Android and Safari
 with the compact tab bar give roughly that height at 390 × 844. With six
 rooms and three alert rows, the alerts and every room card end at about
-601 px, and the Outside card starts at about 625 px, so about 65 px of it is
-visible and the rest needs a short scroll. Everything fits in the full 844 px.
+689 px, and the Outside card starts at about 713 px, so it needs a short
+scroll. Everything just fits in the full 844 px.
 A card with no readings shows one "—" line next to its badge, so it is
 shorter than its neighbours; its row keeps the height of the taller card.
 
-- Alert rows on the overview are single-line: badge, subject, and time. The
-  time keeps the existing `since YYYY-MM-DD HH:MM` format; the sketch shortens
-  it only for width. If a long subject and the time do not fit, the row wraps
-  to a second line and nothing is truncated. The "°C at last notification"
-  detail appears only on `/alerts`.
+- Alert rows on the overview take two lines on phone: badge and the full
+  subject, then the time below. The time keeps the existing
+  `since YYYY-MM-DD HH:MM` format; the sketch shortens it only for width. A
+  subject is never truncated; a long one wraps. From 48rem the row is one
+  line. The "°C at last notification" detail is hidden below 48rem.
 - With more than 3 active alerts, the overview shows the 2 oldest (by onset,
   as on `/alerts`) and a third row "3 more active alerts", which links to
   `/alerts`.

@@ -213,14 +213,16 @@ per alert. The list sits on `--surface`, with 1 px `--border` around it,
 padding and a minimum height of `--tap`.
 
 - Row content, in reading order: badge, subject (`--text-base` 600), detail
-  (`--text-sm` `--text-muted`), time (`--text-sm` `--text-muted`, tabular,
-  pushed right).
+  (`--text-sm` `--text-muted`), time (`--text-sm` `--text-muted`, tabular).
+  A subject is never truncated; it wraps.
 - Active detail: "21.3 °C at last notification" when known. Active time:
   "since 2026-01-15 13:30".
 - Resolved time: "2026-07-15 10:00 – 2026-07-16 01:30".
-- Phone: badge, subject, and time on line 1, detail on line 2 (the row wraps
-  with flex-wrap). On the overview the detail is omitted, so each row is one
-  line.
+- Phone: badge and subject on line 1 (a long subject wraps onto more lines),
+  then the detail, then the time on its own line, left-aligned. On the
+  overview the detail is hidden, so each row has two lines.
+- Desktop (48rem and up): one line, with the time pushed right. A row wraps
+  rather than truncates when it does not fit.
 
 ### Data table (Health)
 
