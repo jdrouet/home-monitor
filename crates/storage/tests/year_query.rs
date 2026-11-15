@@ -91,7 +91,7 @@ fn median(mut durations: Vec<Duration>) -> Duration {
 }
 
 // Diagnostic timing: `YEAR_DATA_DIR` keeps the generated year for other runs.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "generates a year of data"]
 async fn one_year_daily_query_duration() {
     let scratch;

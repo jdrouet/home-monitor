@@ -14,7 +14,7 @@ use use_cases::MeasurementStore;
 const CLIENT_ID: &str = "store";
 const FLUSH_INTERVAL: Duration = Duration::from_secs(3600);
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     run(config::load()?).await
