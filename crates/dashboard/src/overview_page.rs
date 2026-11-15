@@ -144,6 +144,8 @@ mod tests {
             rooms: Vec::new(),
             unknown_sensors: Vec::new(),
         };
-        assert!(page(&overview).await.contains(r#"href="/history""#));
+        let html = page(&overview).await;
+        assert!(html.contains(r#"href="/history""#));
+        assert!(html.contains(r#"<a href="/alerts">Alerts</a>"#));
     }
 }

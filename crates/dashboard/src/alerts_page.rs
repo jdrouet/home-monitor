@@ -19,7 +19,6 @@ impl AlertsPage<'_> {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 /// `None` renders the page for an alerter that cannot be reached.
 pub fn render(summary: Option<&AlertSummary>) -> Response {
     match (AlertsPage { summary }).render() {

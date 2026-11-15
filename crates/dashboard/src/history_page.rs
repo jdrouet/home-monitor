@@ -113,6 +113,7 @@ mod tests {
         assert!(html.contains(r#"href="/assets/uplot-1.6.32.min.css""#));
         assert!(html.contains(r#"src="/assets/uplot-1.6.32.min.js""#));
         assert!(html.contains(r#"href="/""#));
+        assert!(html.contains(r#"<a href="/alerts">Alerts</a>"#));
         assert!(html.contains(r#"<div id="chart">"#));
         assert!(html.contains("const timestamps = [0,900];"));
         assert!(html.contains("const lines = [];"));
