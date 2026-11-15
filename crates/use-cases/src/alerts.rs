@@ -3,11 +3,13 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use domain::{
-    AlertKind, AlertState, Measurement, Metric, OfflineEvent, OfflineWatch, ResolvedAlert,
-    RoomName, SourceId, TemperatureEvent, TemperatureWatch, Thermometer, Timestamp,
+    AlertKind, AlertState, GARMIN, LoginEvent, LoginWatch, Measurement, Metric, OfflineEvent,
+    OfflineWatch, ResolvedAlert, RoomName, SourceId, TemperatureEvent, TemperatureWatch,
+    Thermometer, Timestamp,
 };
 use tracing::{error, info, warn};
 
+use crate::login_notification::login_notification;
 use crate::offline_notification::offline_notification;
 use crate::temperature_notification::temperature_notification;
 use crate::{AlertStateStore, Notification, Notifier};
@@ -104,6 +106,7 @@ pub struct Alerts {
     sensors: RefCell<BTreeMap<SourceId, Watched>>,
     // Resolved alerts, oldest first.
     history: RefCell<Vec<ResolvedAlert>>,
+    login: RefCell<LoginWatch>,
     // Set when the last save failed; the next check saves again.
     unsaved: Cell<bool>,
 }
@@ -142,15 +145,20 @@ impl Alerts {
         Self {
             sensors: RefCell::new(sensors),
             history: RefCell::new(state.history),
+            login: RefCell::new(state.garmin_login.map(LoginWatch::from).unwrap_or_default()),
             unsaved: Cell::new(false),
         }
     }
 
-    /// Records measurements of configured sensors; others are ignored. Every
-    /// metric shows a sensor is alive; only temperatures feed the range rule.
+    /// Records measurements of configured sensors and the Garmin session
+    /// status; others are ignored. Every metric shows a sensor is alive; only
+    /// temperatures feed the range rule.
     pub fn observe(&self, measurements: &[Measurement]) {
         let mut sensors = self.sensors.borrow_mut();
         for measurement in measurements {
+            if self.observe_login(measurement) {
+                continue;
+            }
             let Some(watched) = sensors.get_mut(&measurement.source_id) else {
                 continue;
             };
@@ -161,6 +169,22 @@ impl Alerts {
                 watch.saw(measurement.timestamp, measurement.value);
             }
         }
+    }
+
+    // True for a session status reading; a moved watermark is saved at the
+    // next check.
+    fn observe_login(&self, measurement: &Measurement) -> bool {
+        let is_login =
+            measurement.metric == Metric::SessionValid && measurement.source_id.as_str() == GARMIN;
+        if is_login
+            && self
+                .login
+                .borrow_mut()
+                .saw(measurement.timestamp, measurement.value)
+        {
+            self.unsaved.set(true);
+        }
+        is_login
     }
 
     /// Sends the notification each sensor is owed. Each decision is made from
@@ -196,6 +220,42 @@ impl Alerts {
                 }
             }
         }
+        self.notify_login(notifier, store, &now).await;
+    }
+
+    async fn notify_login<N: Notifier, S: AlertStateStore, C: Fn() -> Timestamp>(
+        &self,
+        notifier: &N,
+        store: &S,
+        now: &C,
+    ) {
+        let Some(event) = self.login.borrow().due(now()) else {
+            return;
+        };
+        match notifier.notify(&login_notification(event)).await {
+            Ok(()) => {
+                self.login_delivered(event, now());
+                self.save(store, now());
+            }
+            Err(error) => {
+                warn!(%error, "garmin login notification failed, retrying at the next check");
+            }
+        }
+    }
+
+    fn login_delivered(&self, event: LoginEvent, now: Timestamp) {
+        let mut login = self.login.borrow_mut();
+        let since = login.since();
+        login.delivered(event, now);
+        if let (LoginEvent::Back, Some(since)) = (event, since) {
+            self.history.borrow_mut().push(ResolvedAlert {
+                source_id: SourceId::from(GARMIN.to_owned()),
+                kind: AlertKind::GarminLogin,
+                started: since,
+                ended: now,
+            });
+        }
+        info!(?event, "garmin login notification delivered");
     }
 
     fn pending(
@@ -255,7 +315,7 @@ impl Alerts {
                 .filter(|resolved| now.duration_since(resolved.ended) <= HISTORY_KEPT)
                 .cloned()
                 .collect(),
-            garmin_login: None,
+            garmin_login: self.login.borrow().state(),
         }
     }
 
@@ -277,9 +337,9 @@ mod tests {
     use std::io;
 
     use domain::{
-        AlertKind, AlertState, Deviation, MacAddress, Measurement, Metric, OfflineAlert,
-        ResolvedAlert, RoomName, SourceKind, TemperatureAlert, TemperatureRange, Thermometer,
-        Timestamp,
+        AlertKind, AlertState, Deviation, GARMIN, LoginState, MacAddress, Measurement, Metric,
+        OfflineAlert, ResolvedAlert, RoomName, SourceId, SourceKind, TemperatureAlert,
+        TemperatureRange, Thermometer, Timestamp,
     };
 
     use crate::{AlertStateStore, Notification, Notifier};
@@ -1056,5 +1116,188 @@ mod tests {
         let history = vec![resolved(MAC_OFFICE, AlertKind::TooCold, 10, 20)];
         let store = holding_history(history.clone());
         assert_eq!(alerts(&store, 100).state(at(100)).history, history);
+    }
+
+    fn session(secs: i64, value: f64) -> Measurement {
+        Measurement {
+            timestamp: at(secs),
+            source_kind: SourceKind::Health,
+            source_id: SourceId::from(GARMIN.to_owned()),
+            metric: Metric::SessionValid,
+            value,
+        }
+    }
+
+    // Both sensors report, then the check runs, so only the login can notify.
+    async fn check_live<H: Fn()>(
+        alerts: &Alerts,
+        notifier: &FakeNotifier<H>,
+        store: &FakeStore,
+        secs: i64,
+    ) {
+        live(alerts, secs, 21.0);
+        check(alerts, notifier, store, secs).await;
+    }
+
+    fn login_state(
+        failed_at: Option<i64>,
+        ok_at: Option<i64>,
+        notified_at: Option<i64>,
+    ) -> LoginState {
+        LoginState {
+            failed_at: failed_at.map(at),
+            ok_at: ok_at.map(at),
+            since: notified_at.map(at),
+            notified_at: notified_at.map(at),
+        }
+    }
+
+    fn holding_login(garmin_login: LoginState) -> FakeStore {
+        FakeStore::holding(AlertState {
+            garmin_login: Some(garmin_login),
+            ..AlertState::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn garmin_login_lifecycle() {
+        let store = FakeStore::new();
+        let alerts = alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        alerts.observe(&[session(10 * MINUTE, 0.0)]);
+        check_live(&alerts, &notifier, &store, 10 * MINUTE).await;
+        assert_eq!(notifier.titles(), ["Garmin login expired"]);
+        assert!(notifier.messages()[0].contains("health-collector login"));
+        check_live(&alerts, &notifier, &store, 12 * HOUR + 9 * MINUTE + 59).await;
+        assert_eq!(notifier.sent.borrow().len(), 1);
+        check_live(&alerts, &notifier, &store, 12 * HOUR + 10 * MINUTE).await;
+        assert_eq!(notifier.titles()[1], "Garmin login still expired");
+        alerts.observe(&[session(13 * HOUR, 1.0)]);
+        check_live(&alerts, &notifier, &store, 13 * HOUR).await;
+        assert_eq!(notifier.titles()[2], "Garmin login works again");
+        let state = alerts.state(at(13 * HOUR));
+        assert_eq!(
+            state.history,
+            [ResolvedAlert {
+                source_id: SourceId::from(GARMIN.to_owned()),
+                kind: AlertKind::GarminLogin,
+                started: at(10 * MINUTE),
+                ended: at(13 * HOUR),
+            }]
+        );
+        check_live(&alerts, &notifier, &store, 14 * HOUR).await;
+        assert_eq!(notifier.sent.borrow().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn no_session_reading_means_no_login_notification() {
+        let store = FakeStore::new();
+        let alerts = alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        check_live(&alerts, &notifier, &store, 30 * MINUTE).await;
+        assert!(notifier.sent.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_failed_login_send_is_retried() {
+        let store = FakeStore::new();
+        let alerts = alerts(&store, 0);
+        let notifier = FakeNotifier::failing(1);
+        alerts.observe(&[session(MINUTE, 0.0)]);
+        check_live(&alerts, &notifier, &store, MINUTE).await;
+        assert!(notifier.sent.borrow().is_empty());
+        check_live(&alerts, &notifier, &store, 2 * MINUTE).await;
+        check_live(&alerts, &notifier, &store, 3 * MINUTE).await;
+        assert_eq!(notifier.titles(), ["Garmin login expired"]);
+    }
+
+    #[tokio::test]
+    async fn a_delivered_login_alert_is_saved_with_both_watermarks() {
+        let store = FakeStore::new();
+        let alerts = alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        alerts.observe(&[session(5, 1.0), session(MINUTE, 0.0)]);
+        check_live(&alerts, &notifier, &store, MINUTE).await;
+        let saved = store.saved.borrow();
+        assert_eq!(
+            saved.last().expect("saved").garmin_login,
+            Some(login_state(Some(MINUTE), Some(5), Some(MINUTE)))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_moved_watermark_is_saved_at_the_next_check() {
+        let store = FakeStore::new();
+        let alerts = alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        alerts.observe(&[session(MINUTE, 1.0)]);
+        check_live(&alerts, &notifier, &store, MINUTE).await;
+        assert!(notifier.sent.borrow().is_empty());
+        assert_eq!(
+            store.saved.borrow()[0].garmin_login,
+            Some(login_state(None, Some(MINUTE), None))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_restart_keeps_the_schedule_and_does_not_repeat_the_onset() {
+        let store = holding_login(login_state(Some(100), None, Some(100)));
+        let alerts = alerts(&store, 200);
+        let notifier = FakeNotifier::new();
+        check_live(&alerts, &notifier, &store, 300).await;
+        assert!(notifier.sent.borrow().is_empty());
+        check_live(&alerts, &notifier, &store, 100 + 12 * HOUR).await;
+        assert_eq!(notifier.titles(), ["Garmin login still expired"]);
+        assert_eq!(
+            alerts.state(at(100 + 12 * HOUR)).garmin_login,
+            Some(LoginState {
+                notified_at: Some(at(100 + 12 * HOUR)),
+                ..login_state(Some(100), None, Some(100))
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_back_that_failed_to_send_is_still_due_after_a_restart() {
+        let store = FakeStore::new();
+        let first = alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        first.observe(&[session(MINUTE, 0.0)]);
+        check_live(&first, &notifier, &store, MINUTE).await;
+        first.observe(&[session(2 * MINUTE, 1.0)]);
+        notifier.failures_left.set(1);
+        check_live(&first, &notifier, &store, 3 * MINUTE).await;
+        assert_eq!(notifier.sent.borrow().len(), 1);
+        let saved = store.saved.borrow().last().cloned().expect("saved");
+        let restarted_store = FakeStore::holding(saved);
+        let restarted = alerts(&restarted_store, 4 * MINUTE);
+        let notifier = FakeNotifier::new();
+        check_live(&restarted, &notifier, &restarted_store, 4 * MINUTE).await;
+        assert_eq!(notifier.titles(), ["Garmin login works again"]);
+    }
+
+    #[tokio::test]
+    async fn an_older_failure_after_a_delivered_back_raises_nothing() {
+        let store = holding_login(login_state(Some(100), Some(200), None));
+        let alerts = alerts(&store, 300);
+        let notifier = FakeNotifier::new();
+        alerts.observe(&[session(0, 0.0)]);
+        check_live(&alerts, &notifier, &store, 400).await;
+        assert!(notifier.sent.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn other_sources_and_metrics_do_not_feed_the_login() {
+        let store = FakeStore::new();
+        let alerts = alerts(&store, 0);
+        let notifier = FakeNotifier::new();
+        let mut other_source = session(MINUTE, 0.0);
+        other_source.source_id = SourceId::from("other".to_owned());
+        let mut other_metric = session(MINUTE, 0.0);
+        other_metric.metric = Metric::Steps;
+        alerts.observe(&[other_source, other_metric]);
+        check_live(&alerts, &notifier, &store, MINUTE).await;
+        assert!(notifier.sent.borrow().is_empty());
+        assert_eq!(alerts.state(at(MINUTE)).garmin_login, None);
     }
 }
