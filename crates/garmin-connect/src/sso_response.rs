@@ -3,8 +3,17 @@ use serde::Deserialize;
 
 use crate::GarminError;
 
-const MAX_KIND_LEN: usize = 32;
 const DEFAULT_MFA_METHOD: &str = "email";
+// Response types an error may name; anything else is reported as unrecognized.
+const KNOWN_KINDS: [&str; 7] = [
+    "SUCCESSFUL",
+    "MFA_REQUIRED",
+    "INVALID_USERNAME_PASSWORD",
+    "CAPTCHA_REQUIRED",
+    "LOCKED",
+    "MAINTENANCE",
+    "INVALID_OTP",
+];
 
 /// What a sign-in or MFA answer asks for next. The ticket is a credential, so
 /// this type has no `Debug`.
@@ -53,7 +62,7 @@ impl SsoOutcome {
         let kind = response
             .status
             .and_then(|status| status.kind)
-            .map_or_else(|| "missing".to_owned(), bounded);
+            .map_or_else(|| "missing".to_owned(), known);
         match kind.as_str() {
             "SUCCESSFUL" => response
                 .ticket
@@ -71,12 +80,10 @@ impl SsoOutcome {
     }
 }
 
-/// Keeps a response type only when it is short and made of letters, digits
-/// and underscores, so remote text cannot fill an error message.
-fn bounded(kind: String) -> String {
-    let plain =
-        kind.len() <= MAX_KIND_LEN && kind.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-    if plain {
+/// Keeps a response type only when it is a known constant, so remote text
+/// never reaches an error message.
+fn known(kind: String) -> String {
+    if KNOWN_KINDS.contains(&kind.as_str()) {
         kind
     } else {
         "unrecognized".to_owned()
@@ -147,18 +154,12 @@ mod tests {
     }
 
     #[test]
-    fn a_response_type_is_kept_only_when_short_and_plain() {
-        let long = format!(r#"{{"responseStatus":{{"type":"{}"}}}}"#, "A".repeat(33));
-        let exact = format!(r#"{{"responseStatus":{{"type":"{}"}}}}"#, "A".repeat(32));
-        let spaced = r#"{"responseStatus":{"type":"bad type"}}"#;
-        let markup = r#"{"responseStatus":{"type":"<b>x</b>"}}"#;
-        let accented = r#"{"responseStatus":{"type":"caf\u00e9"}}"#;
+    fn only_known_response_types_are_named() {
         for (text, expected) in [
-            (long.as_str(), "unrecognized".to_owned()),
-            (exact.as_str(), "A".repeat(32)),
-            (spaced, "unrecognized".to_owned()),
-            (markup, "unrecognized".to_owned()),
-            (accented, "unrecognized".to_owned()),
+            (r#"{"responseStatus":{"type":"LOCKED"}}"#, "LOCKED"),
+            (r#"{"responseStatus":{"type":"hunter2"}}"#, "unrecognized"),
+            (r#"{"responseStatus":{"type":"<b>x</b>"}}"#, "unrecognized"),
+            (r#"{"responseStatus":{"type":"caf\u00e9"}}"#, "unrecognized"),
         ] {
             assert!(matches!(parse(text), Err(GarminError::Unexpected(kind)) if kind == expected));
         }
