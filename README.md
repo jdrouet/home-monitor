@@ -67,6 +67,13 @@ the range per room with `min_temperature` and `max_temperature` (°C) in its
 does not repeat them. See
 [ADR-0019](docs/adr/0019-temperature-alerts-and-alert-state.md).
 
+The dashboard's Alerts page lists the active alerts and those resolved in the
+last 30 days. `alerter` keeps that history in the same state file and serves it
+on its `http_listen` port; the dashboard reads it from `[dashboard] alerter_url`
+(default `http://alerter:8080`). Update every image before setting
+`alerter_url`: older images reject the key. See
+[ADR-0021](docs/adr/0021-alert-history-and-alerts-page.md).
+
 ## Update
 
 ```sh

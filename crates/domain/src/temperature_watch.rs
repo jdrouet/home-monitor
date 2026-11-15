@@ -70,10 +70,16 @@ impl TemperatureWatch {
     /// Records that `event` was accepted by the notifier at `now`.
     pub fn delivered(&mut self, event: TemperatureEvent, now: Timestamp) {
         self.active = match event {
-            TemperatureEvent::Onset { deviation, celsius }
-            | TemperatureEvent::Reminder { deviation, celsius } => Some(TemperatureAlert {
+            TemperatureEvent::Onset { deviation, celsius } => Some(TemperatureAlert {
                 deviation,
                 celsius,
+                since: now,
+                notified_at: now,
+            }),
+            TemperatureEvent::Reminder { deviation, celsius } => Some(TemperatureAlert {
+                deviation,
+                celsius,
+                since: self.active.map_or(now, |active| active.since),
                 notified_at: now,
             }),
             TemperatureEvent::Resolved { .. } => None,
@@ -144,6 +150,7 @@ mod tests {
             Some(TemperatureAlert {
                 deviation,
                 celsius,
+                since: at(notified_at),
                 notified_at: at(notified_at),
             }),
         )
@@ -319,6 +326,27 @@ mod tests {
     }
 
     #[test]
+    fn reminders_keep_the_onset() {
+        let mut watch = watch();
+        watch.saw(at(0), HOT);
+        feed(&mut watch, 15 * MINUTE, HOT);
+        let reminder_at = 15 * MINUTE + 12 * HOUR;
+        feed(&mut watch, reminder_at, HOT);
+        let alert = watch.active().expect("still active");
+        assert_eq!(alert.since, at(15 * MINUTE));
+        assert_eq!(alert.notified_at, at(reminder_at));
+    }
+
+    #[test]
+    fn a_direction_switch_starts_a_new_episode() {
+        let mut watch = restored(Deviation::TooHot, HOT, 0);
+        watch.saw(at(HOUR), COLD);
+        feed(&mut watch, HOUR + 15 * MINUTE, COLD);
+        let alert = watch.active().expect("switched");
+        assert_eq!(alert.since, at(HOUR + 15 * MINUTE));
+    }
+
+    #[test]
     fn delivering_stores_the_event_temperature() {
         let mut watch = watch();
         watch.delivered(
@@ -333,6 +361,7 @@ mod tests {
             Some(TemperatureAlert {
                 deviation: Deviation::TooHot,
                 celsius: HOT,
+                since: at(HOUR),
                 notified_at: at(HOUR),
             })
         );

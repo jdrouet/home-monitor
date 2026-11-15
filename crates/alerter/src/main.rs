@@ -3,14 +3,16 @@ use std::env::{self, VarError};
 use std::time::Duration;
 
 use anyhow::anyhow;
-use axum::{Router, routing::get};
 use config::Config;
-use domain::Timestamp;
+use domain::{AlertState, Timestamp};
 use ntfy::{NtfyNotifier, NtfyTopic};
 use state_file::StateFile;
 use tokio::net::TcpListener;
+use tokio::sync::watch;
 use tokio::time::{Instant, interval_at};
 use use_cases::{AlertStateStore, Alerts, Notifier};
+
+mod router;
 
 const CLIENT_ID: &str = "alerter";
 const TOPIC_ENV: &str = "NTFY_TOPIC";
@@ -39,26 +41,31 @@ async fn run(config: Config, notifier: NtfyNotifier) -> anyhow::Result<()> {
     let store = StateFile::new(config.alerter.state_file.clone());
     let alerts = Alerts::new(&config.thermometers, &store, Timestamp::now());
     let listener = TcpListener::bind(config.alerter.http_listen).await?;
-    let health = Router::new().route("/healthz", get(|| async { "ok" }));
+    let (report, reader) = watch::channel(alerts.state(Timestamp::now()));
     tokio::select! {
-        served = axum::serve(listener, health) => Err(anyhow!("health server ended: {served:?}")),
+        served = axum::serve(listener, router::router(reader)) => Err(anyhow!("http server ended: {served:?}")),
         error = mqtt::subscribe(&config.mqtt.host, config.mqtt.port, CLIENT_ID, |batch| {
             alerts.observe(&batch);
             Ok::<(), Infallible>(())
         }) => Err(error.into()),
-        never = notify_every(&alerts, &notifier, &store) => match never {},
+        never = notify_every(&alerts, &notifier, &store, &report) => match never {},
     }
 }
 
+/// Checks every `CHECK_PERIOD` and publishes the alert report after each pass.
+/// A pass waits for its notifications, so the report is refreshed normally
+/// every 60 s and later when ntfy is slow.
 async fn notify_every<N: Notifier, S: AlertStateStore>(
     alerts: &Alerts,
     notifier: &N,
     store: &S,
+    report: &watch::Sender<AlertState>,
 ) -> Infallible {
     let mut ticker = interval_at(Instant::now() + CHECK_PERIOD, CHECK_PERIOD);
     loop {
         ticker.tick().await;
         alerts.notify_due(notifier, store, Timestamp::now).await;
+        report.send_replace(alerts.state(Timestamp::now()));
     }
 }
 

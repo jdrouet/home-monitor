@@ -13,6 +13,7 @@ use crate::ConfigError;
 const PATH_ENV: &str = "HOME_MONITOR_CONFIG";
 const DEFAULT_PATH: &str = "config.toml";
 const DEFAULT_STATE_FILE: &str = "/data/alerts.json";
+const DEFAULT_ALERTER_URL: &str = "http://alerter:8080";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,6 +52,12 @@ pub struct StoreConfig {
 pub struct DashboardConfig {
     pub http_listen: SocketAddr,
     pub store_url: String,
+    #[serde(default = "default_alerter_url")]
+    pub alerter_url: String,
+}
+
+fn default_alerter_url() -> String {
+    DEFAULT_ALERTER_URL.to_owned()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -162,6 +169,22 @@ mod tests {
         assert_eq!(config.dashboard.store_url, "http://store:8080");
         assert_eq!(config.store.data_dir, Path::new("/data"));
         assert_eq!(config.alerter.ntfy_url, "http://ntfy");
+    }
+
+    #[test]
+    fn alerter_url_defaults_to_the_alerter_service() {
+        let config: Config = EXAMPLE.parse().expect("example is valid");
+        assert_eq!(config.dashboard.alerter_url, "http://alerter:8080");
+    }
+
+    #[test]
+    fn alerter_url_can_be_set() {
+        let text = EXAMPLE.replace(
+            "store_url = \"http://store:8080\"\n",
+            "store_url = \"http://store:8080\"\nalerter_url = \"http://other:9000\"\n",
+        );
+        let config: Config = text.parse().expect("config is valid");
+        assert_eq!(config.dashboard.alerter_url, "http://other:9000");
     }
 
     #[test]

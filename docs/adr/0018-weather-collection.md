@@ -1,6 +1,6 @@
 # ADR-0018: Outdoor weather collection
 
-Status: accepted
+Status: accepted (dashboard data sources amended by ADR-0021)
 
 ## Context
 Issue #4 needs outdoor temperature, humidity and today's forecast on the

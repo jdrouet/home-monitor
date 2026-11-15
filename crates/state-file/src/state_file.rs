@@ -92,7 +92,10 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use domain::{AlertState, Deviation, OfflineAlert, SourceId, TemperatureAlert, Timestamp};
+    use domain::{
+        AlertKind, AlertState, Deviation, OfflineAlert, ResolvedAlert, SourceId, TemperatureAlert,
+        Timestamp,
+    };
     use tempfile::TempDir;
     use use_cases::AlertStateStore;
 
@@ -106,6 +109,7 @@ mod tests {
             SourceId::from("A4:C1:38:00:00:01".to_owned()),
             OfflineAlert {
                 last_seen: Timestamp::from_micros(10),
+                since: Timestamp::from_micros(15),
                 notified_at: Timestamp::from_micros(20),
             },
         );
@@ -114,9 +118,16 @@ mod tests {
             TemperatureAlert {
                 deviation: Deviation::TooHot,
                 celsius: 21.3,
+                since: Timestamp::from_micros(25),
                 notified_at: Timestamp::from_micros(30),
             },
         );
+        state.history.push(ResolvedAlert {
+            source_id: SourceId::from("A4:C1:38:00:00:03".to_owned()),
+            kind: AlertKind::Offline,
+            started: Timestamp::from_micros(40),
+            ended: Timestamp::from_micros(50),
+        });
         state
     }
 
@@ -143,6 +154,19 @@ mod tests {
         let json = fs::read_to_string(dir.path().join("alerts.json")).expect("read");
         assert!(json.contains("\"version\":1"));
         assert!(json.contains("\"deviation\":\"too_hot\""));
+        assert!(json.contains("\"history\":[{"));
+    }
+
+    #[test]
+    fn a_file_without_since_loads_with_the_last_notification() {
+        let dir = TempDir::new().expect("tempdir");
+        let json = r#"{"version":1,"offline":{"A4:C1:38:00:00:01":{"last_seen":10,"notified_at":20}},"temperature":{"A4:C1:38:00:00:02":{"deviation":"too_hot","celsius":21.3,"notified_at":30}}}"#;
+        fs::write(dir.path().join("alerts.json"), json).expect("write");
+        let state = file_in(&dir).load().expect("load");
+        let offline = state.offline[&SourceId::from("A4:C1:38:00:00:01".to_owned())];
+        let temperature = state.temperature[&SourceId::from("A4:C1:38:00:00:02".to_owned())];
+        assert_eq!(offline.since, Timestamp::from_micros(20));
+        assert_eq!(temperature.since, Timestamp::from_micros(30));
     }
 
     #[test]
