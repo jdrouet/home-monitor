@@ -1,6 +1,6 @@
 # ADR-0022: Garmin health collection
 
-Status: accepted (backfill consequence amended by ADR-0023; session outcomes and repair of missed days amended by ADR-0024)
+Status: accepted (backfill consequence amended by ADR-0023; session outcomes and repair of missed days amended by ADR-0024; request pacing amended by ADR-0025)
 
 ## Context
 Issue #12 needs daily sleep, resting heart rate, steps and Body Battery from
