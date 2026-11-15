@@ -56,15 +56,18 @@ impl GarminConnect {
 
     /// Refreshes the stored tokens and saves the result before any other call.
     /// The lock is held from the load to the save and is taken off the runtime
-    /// thread, which other lock holders' requests may need.
+    /// thread, which other lock holders' requests may need. The save's task
+    /// owns the lock, so a cancelled call cannot release it mid-write.
     async fn refresh_and_save(&self) -> Result<Tokens, GarminError> {
         let file = self.token_file.clone();
         let (lock, stored) = blocking(move || Ok((file.lock()?, file.load()?))).await?;
         let fresh = self.refresh(&stored).await?;
         let file = self.token_file.clone();
-        let saved = blocking(move || file.save(&fresh).map(|()| fresh)).await;
-        drop(lock);
-        saved
+        blocking(move || {
+            let _lock = lock;
+            file.save(&fresh).map(|()| fresh)
+        })
+        .await
     }
 
     async fn refresh(&self, stored: &Tokens) -> Result<Tokens, GarminError> {
