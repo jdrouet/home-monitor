@@ -10,15 +10,19 @@ pub struct TokenResponse {
 }
 
 impl TokenResponse {
-    /// The tokens to store; `previous_refresh` stands in when Garmin does not
-    /// rotate the refresh token.
+    /// The tokens to store; `previous_refresh` stands in when Garmin sends no
+    /// refresh token or a blank one. A blank access token is malformed.
     pub fn into_tokens(
         self,
         client_id: String,
         previous_refresh: Option<&str>,
     ) -> Result<Tokens, GarminError> {
+        if self.access_token.trim().is_empty() {
+            return Err(GarminError::Malformed);
+        }
         let di_refresh_token = self
             .refresh_token
+            .filter(|token| !token.trim().is_empty())
             .or_else(|| previous_refresh.map(str::to_owned))
             .ok_or(GarminError::Malformed)?;
         Ok(Tokens {
@@ -57,6 +61,36 @@ mod tests {
             .into_tokens("client".to_owned(), Some("old"))
             .expect("tokens");
         assert_eq!(tokens.di_refresh_token, "old");
+    }
+
+    #[test]
+    fn a_blank_refresh_token_keeps_the_previous_one() {
+        for blank in ["", "  "] {
+            let tokens = parse(&format!(
+                r#"{{"access_token":"a","refresh_token":"{blank}"}}"#
+            ))
+            .into_tokens("client".to_owned(), Some("old"))
+            .expect("tokens");
+            assert_eq!(tokens.di_refresh_token, "old");
+        }
+    }
+
+    #[test]
+    fn a_blank_refresh_token_without_a_previous_one_is_malformed() {
+        let result = parse(r#"{"access_token":"a","refresh_token":" "}"#)
+            .into_tokens("client".to_owned(), None);
+        assert!(matches!(result, Err(GarminError::Malformed)));
+    }
+
+    #[test]
+    fn a_blank_access_token_is_malformed() {
+        for blank in ["", "  "] {
+            let result = parse(&format!(
+                r#"{{"access_token":"{blank}","refresh_token":"r"}}"#
+            ))
+            .into_tokens("client".to_owned(), Some("old"));
+            assert!(matches!(result, Err(GarminError::Malformed)));
+        }
     }
 
     #[test]

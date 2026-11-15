@@ -300,6 +300,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_blank_refresh_token_keeps_the_stored_one() {
+        let dir = TempDir::new().expect("tempdir");
+        let body = r#"{"access_token":"new-access","refresh_token":"  "}"#;
+        let replies = vec![Reply::new(200, body), Reply::new(200, PROFILE)];
+        let (connect, _server, file) = connect(replies, &dir).await;
+        connect.open().await.expect("session");
+        let saved = file.load().expect("load");
+        assert_eq!(saved.di_token, "new-access");
+        assert_eq!(saved.di_refresh_token, "old-refresh");
+    }
+
+    #[tokio::test]
+    async fn a_blank_access_token_is_rejected_before_saving() {
+        let dir = TempDir::new().expect("tempdir");
+        let body = r#"{"access_token":"","refresh_token":"new-refresh"}"#;
+        let (connect, server, file) = connect(vec![Reply::new(200, body)], &dir).await;
+        let error = connect.open().await.expect_err("blank access token");
+        assert!(matches!(error, GarminError::Malformed));
+        assert_eq!(file.load().expect("load"), stored());
+        assert_eq!(server.requests().len(), 1);
+    }
+
+    #[tokio::test]
     async fn open_without_a_token_file_sends_nothing() {
         let dir = TempDir::new().expect("tempdir");
         let (connect, server, _) = connect(vec![], &dir).await;

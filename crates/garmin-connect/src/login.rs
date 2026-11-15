@@ -428,6 +428,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_blank_access_token_from_the_exchange_saves_nothing() {
+        let body = r#"{"access_token":" ","refresh_token":"r"}"#;
+        let replies = vec![
+            sign_in_page(),
+            Reply::new(200, SUCCESS),
+            Reply::new(200, body),
+        ];
+        let run = run(replies).await;
+        assert!(matches!(run.result, Err(GarminError::Malformed)));
+        assert_eq!(run.server.requests().len(), 3);
+        assert!(!run.saved());
+    }
+
+    #[tokio::test]
     async fn every_client_id_failing_saves_nothing() {
         let replies = vec![
             sign_in_page(),
