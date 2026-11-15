@@ -15,8 +15,8 @@ const MARGIN: Duration = Duration::from_secs(5 * 60);
 /// A session is replaced after this long, well within the token's hour.
 const SESSION_MAX_AGE: Duration = Duration::from_secs(30 * 60);
 
-/// Imports the past year of health days one at a time, resuming from a
-/// persisted cursor, and stops before `until` so the daily pull is not delayed.
+/// Imports health days one at a time, resuming from a persisted cursor, and
+/// stops before `until` so the daily pull is not delayed.
 pub struct HealthBackfill<'a, H, P, S> {
     pub provider: &'a H,
     pub publisher: &'a P,
@@ -34,90 +34,109 @@ enum Step {
     Stop,
 }
 
+/// Why a run ended. `Stopped` means Garmin or the disk refused something that
+/// would refuse again at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunEnd {
+    /// The cursor is done.
+    Done,
+    /// The next step does not fit before the deadline.
+    OutOfTime,
+    /// The cursor could not be read, so nothing was attempted.
+    Skipped,
+    /// A session, fetch, publish or save failed.
+    Stopped,
+}
+
 impl<H: HealthProvider, P: Publisher, S: BackfillStore> HealthBackfill<'_, H, P, S> {
     /// Imports days until the range is done, `until` is near, or a step fails.
-    /// A stop leaves the cursor on the first day not yet published.
+    /// `plan` turns the stored cursor, if any, into the range to work on, and
+    /// the result is saved before the first fetch. A stop leaves the cursor on
+    /// the first day not yet published.
     pub async fn run(
         &self,
-        today: NaiveDate,
+        plan: impl FnOnce(Option<BackfillCursor>) -> BackfillCursor,
         until: Timestamp,
         clock: impl Fn() -> Timestamp,
         day_stamp: impl Fn(NaiveDate) -> Timestamp,
-    ) {
-        let Some(mut cursor) = self.cursor(today) else {
-            return;
+    ) -> RunEnd {
+        let mut cursor = match self.cursor(plan) {
+            Ok(cursor) => cursor,
+            Err(end) => return end,
         };
         let mut opened = None;
         while !cursor.is_done() {
-            let Some(open) = self.session(opened.take(), until, &clock).await else {
-                return;
+            let open = match self.session(opened.take(), until, &clock).await {
+                Ok(open) => open,
+                Err(end) => return end,
             };
             if !turn(until, &clock).await {
-                return;
+                return RunEnd::OutOfTime;
             }
             if clock().duration_since(open.at) >= SESSION_MAX_AGE {
                 continue;
             }
             let date = cursor.next;
             if let Step::Stop = self.day(&open.session, date, day_stamp(date)).await {
-                return;
+                return RunEnd::Stopped;
             }
             let next = cursor.advanced();
             if let Err(error) = self.store.save(&next) {
                 error!(%error, "cannot save the backfill cursor, stopping");
-                return;
+                return RunEnd::Stopped;
             }
             cursor = next;
             opened = Some(open);
         }
         info!("health backfill finished");
+        RunEnd::Done
     }
 
-    /// The cursor to work from; `None` when there is nothing to do.
-    fn cursor(&self, today: NaiveDate) -> Option<BackfillCursor> {
-        let cursor = match self.store.load() {
-            Ok(Some(cursor)) => cursor,
-            Ok(None) => self.anchor(today)?,
-            Err(error) => {
-                error!(%error, "cannot read the backfill cursor, skipping the import");
-                return None;
-            }
-        };
-        (!cursor.is_done()).then_some(cursor)
-    }
-
-    fn anchor(&self, today: NaiveDate) -> Option<BackfillCursor> {
-        let cursor = BackfillCursor::anchored_at(today);
-        if let Err(error) = self.store.save(&cursor) {
-            error!(%error, "cannot save the backfill cursor, skipping the import");
-            return None;
+    /// The cursor to work from, or why there is nothing to do.
+    fn cursor(
+        &self,
+        plan: impl FnOnce(Option<BackfillCursor>) -> BackfillCursor,
+    ) -> Result<BackfillCursor, RunEnd> {
+        let stored = self.store.load().map_err(|error| {
+            error!(%error, "cannot read the backfill cursor, skipping the import");
+            RunEnd::Skipped
+        })?;
+        let planned = plan(stored);
+        if Some(planned) != stored {
+            self.store.save(&planned).map_err(|error| {
+                error!(%error, "cannot save the backfill cursor, skipping the import");
+                RunEnd::Stopped
+            })?;
+            info!(next = %planned.next, last = %planned.last, "health backfill range saved");
         }
-        info!(next = %cursor.next, last = %cursor.last, "health backfill range saved");
-        Some(cursor)
+        if planned.is_done() {
+            return Err(RunEnd::Done);
+        }
+        Ok(planned)
     }
 
-    /// `current`, else a new session after its own wait; `None` when there is
+    /// `current`, else a new session after its own wait; the end when there is
     /// no time left or Garmin refuses the session.
     async fn session(
         &self,
         current: Option<Opened<H::Session>>,
         until: Timestamp,
         clock: &impl Fn() -> Timestamp,
-    ) -> Option<Opened<H::Session>> {
-        if current.is_some() {
-            return current;
+    ) -> Result<Opened<H::Session>, RunEnd> {
+        if let Some(current) = current {
+            return Ok(current);
         }
         if !turn(until, clock).await {
-            return None;
+            return Err(RunEnd::OutOfTime);
         }
         match self.provider.open().await {
-            Ok(session) => Some(Opened {
+            Ok(session) => Ok(Opened {
                 session,
                 at: clock(),
             }),
             Err(error) => {
                 warn!(%error, "backfill session failed, resuming after the next pull");
-                None
+                Err(RunEnd::Stopped)
             }
         }
     }
@@ -182,6 +201,8 @@ mod tests {
     use crate::{
         BackfillCursor, BackfillStore, DailyHealth, HealthBackfill, HealthProvider, Publisher,
     };
+
+    use super::RunEnd;
 
     #[derive(Debug, Clone, Copy)]
     enum TestError {
@@ -394,7 +415,7 @@ mod tests {
         store: &TestStore,
         until: Timestamp,
         clock: impl Fn() -> Timestamp,
-    ) {
+    ) -> RunEnd {
         let source_id = SourceId::from("garmin".to_owned());
         HealthBackfill {
             provider,
@@ -402,8 +423,13 @@ mod tests {
             store,
             source_id: &source_id,
         }
-        .run(today(), until, clock, stamp)
-        .await;
+        .run(
+            |stored| stored.unwrap_or_else(|| BackfillCursor::anchored_at(today())),
+            until,
+            clock,
+            stamp,
+        )
+        .await
     }
 
     async fn run(
@@ -415,6 +441,15 @@ mod tests {
         let clock = clock();
         run_with(provider, publisher, store, after(window), &clock).await;
         clock()
+    }
+
+    async fn end(
+        provider: &TestProvider,
+        publisher: &TestPublisher,
+        store: &TestStore,
+        window: Duration,
+    ) -> RunEnd {
+        run_with(provider, publisher, store, after(window), clock()).await
     }
 
     fn three_days() -> BackfillCursor {
@@ -698,5 +733,139 @@ mod tests {
         );
         run(&provider, &publisher, &store, DAY).await;
         assert_eq!(provider.opens(), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_unchanged_plan_saves_nothing_and_a_changed_one_saves_once() {
+        let (provider, publisher) = (TestProvider::default(), TestPublisher::default());
+        let store = TestStore::holding(three_days());
+        let source_id = SourceId::from("garmin".to_owned());
+        let backfill = HealthBackfill {
+            provider: &provider,
+            publisher: &publisher,
+            store: &store,
+            source_id: &source_id,
+        };
+        let planned = BackfillCursor {
+            next: jan(3),
+            last: jan(3),
+        };
+        backfill
+            .run(|_| three_days(), after(Duration::ZERO), clock(), stamp)
+            .await;
+        assert!(store.saves().is_empty());
+        backfill.run(|_| planned, after(DAY), clock(), stamp).await;
+        assert_eq!(store.saves()[0], planned);
+        assert_eq!(provider.fetched(), [jan(3)]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_plan_that_is_done_is_saved_and_ends_done_without_contacting_garmin() {
+        let (provider, publisher) = (TestProvider::default(), TestPublisher::default());
+        let store = TestStore::holding(three_days());
+        let source_id = SourceId::from("garmin".to_owned());
+        let done = BackfillCursor {
+            next: jan(5),
+            last: jan(4),
+        };
+        let end = HealthBackfill {
+            provider: &provider,
+            publisher: &publisher,
+            store: &store,
+            source_id: &source_id,
+        }
+        .run(|_| done, after(DAY), clock(), stamp)
+        .await;
+        assert_eq!(end, RunEnd::Done);
+        assert_eq!(store.stored(), Some(done));
+        assert_eq!(provider.opens(), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_finished_range_ends_done() {
+        let (provider, publisher) = (TestProvider::default(), TestPublisher::default());
+        let store = TestStore::holding(three_days());
+        assert_eq!(end(&provider, &publisher, &store, DAY).await, RunEnd::Done);
+        assert_eq!(end(&provider, &publisher, &store, DAY).await, RunEnd::Done);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_short_window_ends_out_of_time() {
+        let (provider, publisher) = (TestProvider::default(), TestPublisher::default());
+        let store = TestStore::holding(three_days());
+        let window = Duration::from_secs(6 * 60 - 1);
+        assert_eq!(
+            end(&provider, &publisher, &store, window).await,
+            RunEnd::OutOfTime
+        );
+        let window = Duration::from_secs(20 * 60);
+        let store = TestStore::default();
+        assert_eq!(
+            end(&provider, &publisher, &store, window).await,
+            RunEnd::OutOfTime
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_unreadable_cursor_ends_skipped() {
+        let (provider, publisher) = (TestProvider::default(), TestPublisher::default());
+        let store = TestStore {
+            load_fails: true,
+            ..TestStore::default()
+        };
+        assert_eq!(
+            end(&provider, &publisher, &store, DAY).await,
+            RunEnd::Skipped
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failures_end_stopped() {
+        let publisher = TestPublisher::default();
+        let store = || TestStore::holding(three_days());
+        let open_fails = TestProvider {
+            open_fails: true,
+            ..TestProvider::default()
+        };
+        let session = TestProvider {
+            results: HashMap::from([(jan(1), Err(TestError::Session))]),
+            ..TestProvider::default()
+        };
+        let throttled = TestProvider {
+            results: HashMap::from([(jan(1), Err(TestError::Throttled))]),
+            ..TestProvider::default()
+        };
+        for provider in [open_fails, session, throttled] {
+            assert_eq!(
+                end(&provider, &publisher, &store(), DAY).await,
+                RunEnd::Stopped
+            );
+        }
+        let failing = TestPublisher {
+            failing: [stamp(jan(1)).as_micros()].into(),
+            ..TestPublisher::default()
+        };
+        let provider = TestProvider::default();
+        assert_eq!(
+            end(&provider, &failing, &store(), DAY).await,
+            RunEnd::Stopped
+        );
+        let unsaved = TestStore {
+            save_fails: true,
+            stored: Mutex::new(Some(three_days())),
+            ..TestStore::default()
+        };
+        assert_eq!(
+            end(&provider, &publisher, &unsaved, DAY).await,
+            RunEnd::Stopped
+        );
+        let unanchored = TestStore {
+            save_fails: true,
+            ..TestStore::default()
+        };
+        assert_eq!(
+            end(&provider, &publisher, &unanchored, DAY).await,
+            RunEnd::Stopped
+        );
     }
 }

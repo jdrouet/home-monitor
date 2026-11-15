@@ -20,8 +20,8 @@ use state_file::BackfillFile;
 use tokio::net::TcpListener;
 use tokio::time::sleep;
 use use_cases::{
-    BackfillStore, HealthBackfill, HealthProvider, HealthPull, Publisher, collect_health,
-    report_session,
+    BackfillCursor, BackfillStore, HealthBackfill, HealthProvider, HealthPull, Publisher,
+    collect_health, report_session,
 };
 
 const CLIENT_ID: &str = "health-collector";
@@ -100,6 +100,7 @@ async fn pull_forever<H: HealthProvider, P: Publisher, S: BackfillStore>(
     loop {
         let started = Timestamp::now();
         let next = next_pull(started);
+        let today = paris_date(started);
         let pull = collect_health(provider, publisher, source_id, &pull_days(started)).await;
         report_session(publisher, source_id, &pull, started).await;
         if matches!(pull, HealthPull::Completed { .. }) {
@@ -110,7 +111,7 @@ async fn pull_forever<H: HealthProvider, P: Publisher, S: BackfillStore>(
                 source_id,
             }
             .run(
-                paris_date(started),
+                |stored| stored.unwrap_or_else(|| BackfillCursor::anchored_at(today)),
                 next,
                 Timestamp::now,
                 completed_day_stamp,
