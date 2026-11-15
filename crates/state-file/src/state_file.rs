@@ -92,7 +92,10 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use domain::{AlertState, Deviation, OfflineAlert, SourceId, TemperatureAlert, Timestamp};
+    use domain::{
+        AlertKind, AlertState, Deviation, OfflineAlert, ResolvedAlert, SourceId, TemperatureAlert,
+        Timestamp,
+    };
     use tempfile::TempDir;
     use use_cases::AlertStateStore;
 
@@ -119,6 +122,12 @@ mod tests {
                 notified_at: Timestamp::from_micros(30),
             },
         );
+        state.history.push(ResolvedAlert {
+            source_id: SourceId::from("A4:C1:38:00:00:03".to_owned()),
+            kind: AlertKind::Offline,
+            started: Timestamp::from_micros(40),
+            ended: Timestamp::from_micros(50),
+        });
         state
     }
 
@@ -145,6 +154,7 @@ mod tests {
         let json = fs::read_to_string(dir.path().join("alerts.json")).expect("read");
         assert!(json.contains("\"version\":1"));
         assert!(json.contains("\"deviation\":\"too_hot\""));
+        assert!(json.contains("\"history\":[{"));
     }
 
     #[test]

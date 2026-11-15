@@ -187,6 +187,7 @@ impl Alerts {
         AlertState {
             offline,
             temperature,
+            history: Vec::new(),
         }
     }
 
