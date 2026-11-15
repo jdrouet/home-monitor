@@ -1,6 +1,6 @@
 use std::cmp::Reverse;
 
-use domain::{AlertKind, AlertState, SourceId, Thermometer, Timestamp};
+use domain::{AlertKind, AlertState, GARMIN, SourceId, Thermometer, Timestamp};
 
 /// An alert delivered and not yet resolved. `celsius` is the temperature at
 /// the last notification, set for temperature alerts only.
@@ -28,10 +28,13 @@ pub struct AlertSummary {
     pub resolved: Vec<ResolvedAlertLine>,
 }
 
-/// Names each alert after its room; a source that is not configured keeps
-/// its source id.
+/// Names each alert after its room, the Garmin login alert "Garmin"; a source
+/// that is not configured keeps its source id.
 pub fn build_alert_summary(thermometers: &[Thermometer], state: &AlertState) -> AlertSummary {
     let subject = |source_id: &SourceId| {
+        if source_id.as_str() == GARMIN {
+            return "Garmin".to_owned();
+        }
         thermometers
             .iter()
             .find(|thermometer| SourceId::from(thermometer.mac) == *source_id)
@@ -58,7 +61,16 @@ pub fn build_alert_summary(thermometers: &[Thermometer], state: &AlertState) -> 
             celsius: Some(alert.celsius),
             since: alert.since,
         });
-    let mut active: Vec<ActiveAlertLine> = offline.chain(temperature).collect();
+    let login = state
+        .garmin_login
+        .and_then(|login| login.since)
+        .map(|since| ActiveAlertLine {
+            subject: "Garmin".to_owned(),
+            kind: AlertKind::GarminLogin,
+            celsius: None,
+            since,
+        });
+    let mut active: Vec<ActiveAlertLine> = offline.chain(temperature).chain(login).collect();
     active.sort_by_key(|line| line.since);
     let mut resolved: Vec<ResolvedAlertLine> = state
         .history
@@ -77,8 +89,8 @@ pub fn build_alert_summary(thermometers: &[Thermometer], state: &AlertState) -> 
 #[cfg(test)]
 mod tests {
     use domain::{
-        AlertKind, AlertState, Deviation, MacAddress, OfflineAlert, ResolvedAlert, RoomName,
-        SourceId, TemperatureAlert, Thermometer, Timestamp,
+        AlertKind, AlertState, Deviation, GARMIN, LoginState, MacAddress, OfflineAlert,
+        ResolvedAlert, RoomName, SourceId, TemperatureAlert, Thermometer, Timestamp,
     };
 
     use super::build_alert_summary;
@@ -200,5 +212,57 @@ mod tests {
         assert_eq!(ended, [at(40), at(30), at(20)]);
         assert_eq!(summary.resolved[0].started, at(5));
         assert_eq!(summary.resolved[0].kind, AlertKind::TooHot);
+    }
+
+    fn garmin_login(since: i64) -> LoginState {
+        LoginState {
+            since: Some(at(since)),
+            notified_at: Some(at(since)),
+            ..LoginState::default()
+        }
+    }
+
+    #[test]
+    fn the_garmin_login_alert_is_listed_in_onset_order() {
+        let mut state = AlertState::default();
+        state.offline.insert(MAC_BEDROOM.into(), offline(30));
+        state.offline.insert(MAC_OFFICE.into(), offline(10));
+        state.garmin_login = Some(garmin_login(20));
+        let summary = build_alert_summary(&thermometers(), &state);
+        let subjects: Vec<_> = summary.active.iter().map(|l| l.subject.as_str()).collect();
+        assert_eq!(subjects, ["office", "Garmin", "bedroom"]);
+        assert_eq!(summary.active[1].kind, AlertKind::GarminLogin);
+        assert_eq!(summary.active[1].celsius, None);
+        assert_eq!(summary.active[1].since, at(20));
+    }
+
+    #[test]
+    fn a_login_watch_without_a_delivered_alert_is_not_active() {
+        let state = AlertState {
+            garmin_login: Some(LoginState {
+                ok_at: Some(at(5)),
+                ..LoginState::default()
+            }),
+            ..AlertState::default()
+        };
+        assert!(
+            build_alert_summary(&thermometers(), &state)
+                .active
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn the_resolved_garmin_login_is_named_garmin() {
+        let mut state = AlertState::default();
+        state.history.push(ResolvedAlert {
+            source_id: SourceId::from(GARMIN.to_owned()),
+            kind: AlertKind::GarminLogin,
+            started: at(1),
+            ended: at(2),
+        });
+        let summary = build_alert_summary(&thermometers(), &state);
+        assert_eq!(summary.resolved[0].subject, "Garmin");
+        assert_eq!(summary.resolved[0].kind, AlertKind::GarminLogin);
     }
 }
