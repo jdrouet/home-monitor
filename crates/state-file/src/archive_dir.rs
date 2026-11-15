@@ -1,3 +1,5 @@
+use std::fs::{self, File};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use chrono::Datelike;
@@ -90,7 +92,18 @@ impl RawArchive for ArchiveDir {
     }
 
     fn put(&self, key: &ArchiveKey, bytes: &[u8]) -> Result<(), Self::Error> {
-        self.write(key, file_name(key), bytes)
+        self.write(key, file_name(key), bytes)?;
+        let dir = self.dir(key);
+        let marker = dir.join(denied_name(key));
+        match fs::remove_file(&marker) {
+            Ok(()) => File::open(&dir).and_then(|dir| dir.sync_all()),
+            Err(source) if source.kind() == ErrorKind::NotFound => Ok(()),
+            Err(source) => Err(source),
+        }
+        .map_err(|source| StateFileError::Write {
+            path: marker,
+            source,
+        })
     }
 
     fn put_denied(&self, key: &ArchiveKey) -> Result<(), Self::Error> {
@@ -195,6 +208,18 @@ mod tests {
             0
         );
         assert!(!folder.join("sleep.json").exists());
+        assert!(archive.contains(&day()).expect("contains"));
+    }
+
+    #[test]
+    fn a_stored_document_drops_the_denied_marker() {
+        let dir = TempDir::new().expect("tempdir");
+        let archive = archive_in(&dir);
+        archive.put_denied(&day()).expect("denied");
+        archive.put(&day(), b"x").expect("put");
+        let folder = dir.path().join("garmin/daily/2026/2026-07-14");
+        assert!(!folder.join("sleep.json.denied").exists());
+        assert_eq!(fs::read(folder.join("sleep.json")).expect("read"), b"x");
         assert!(archive.contains(&day()).expect("contains"));
     }
 
