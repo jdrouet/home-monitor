@@ -4,6 +4,7 @@ mod alert_state_store;
 mod alerts;
 mod collect_weather;
 mod collector;
+mod history;
 mod latest_values;
 mod measurement_store;
 mod notification;
@@ -21,6 +22,9 @@ pub use alert_state_store::AlertStateStore;
 pub use alerts::Alerts;
 pub use collect_weather::collect_weather;
 pub use collector::Collector;
+pub use history::{
+    HISTORY_METRICS, HistoryChart, HistorySelection, Period, build_history, history_query,
+};
 pub use latest_values::LatestValues;
 pub use measurement_store::MeasurementStore;
 pub use notification::Notification;
