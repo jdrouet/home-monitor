@@ -3675,6 +3675,7 @@ dependencies = [
  "domain",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

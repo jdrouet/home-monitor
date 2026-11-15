@@ -118,6 +118,7 @@ impl<H: HealthProvider, P: Publisher, S: BackfillStore> HealthBackfill<'_, H, P,
 
     async fn publish(&self, date: NaiveDate, batch: &[Measurement]) -> Step {
         if batch.is_empty() {
+            info!(%date, "backfill day empty, garmin returned no figures");
             return Step::Next;
         }
         match self
@@ -125,7 +126,10 @@ impl<H: HealthProvider, P: Publisher, S: BackfillStore> HealthBackfill<'_, H, P,
             .publish(SourceKind::Health, self.source_id, batch)
             .await
         {
-            Ok(()) => Step::Next,
+            Ok(()) => {
+                info!(%date, metrics = batch.len(), "backfill day stored");
+                Step::Next
+            }
             Err(error) => {
                 warn!(%error, %date, "backfill publish failed, resuming after the next pull");
                 Step::Stop
@@ -139,13 +143,14 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::fmt;
     use std::io;
-    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, LazyLock, Mutex};
     use std::time::Duration;
 
     use chrono::{Datelike, NaiveDate};
     use domain::{Measurement, SourceId, SourceKind, Timestamp};
     use tokio::time::sleep;
+    use tracing_subscriber::fmt::MakeWriter;
 
     use crate::test_archive::{MemoryBackfill, START, after, clock};
     use crate::{BackfillCursor, DailyHealth, HealthBackfill, HealthProvider, Publisher};
@@ -593,6 +598,90 @@ mod tests {
         run(&provider, &publisher, &store, DAY).await;
         assert_eq!(publisher.stamps(), [stamp(jan(3)).as_micros()]);
         assert!(store.stored().expect("cursor").is_done());
+    }
+
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().expect("lock").extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl MakeWriter<'_> for Captured {
+        type Writer = Self;
+
+        fn make_writer(&self) -> Self {
+            self.clone()
+        }
+    }
+
+    /// A global subscriber: a scoped one races with callsites that other
+    /// tests already registered with no subscriber.
+    fn capture() -> &'static Captured {
+        static CAPTURED: LazyLock<Captured> = LazyLock::new(|| {
+            let captured = Captured::default();
+            tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_writer(captured.clone())
+                .init();
+            captured
+        });
+        &CAPTURED
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn each_passed_day_logs_one_info_line_and_a_failed_day_keeps_its_warning() {
+        let captured = capture();
+        let march = |day| date(2025, 3, day);
+        let provider = TestProvider {
+            results: HashMap::from([
+                (
+                    march(1),
+                    Ok(DailyHealth {
+                        steps: Some(987_654),
+                        ..DailyHealth::default()
+                    }),
+                ),
+                (march(2), Ok(DailyHealth::default())),
+                (march(3), Err(TestError::Day)),
+            ]),
+            ..TestProvider::default()
+        };
+        let (publisher, store) = (
+            TestPublisher::default(),
+            MemoryBackfill::holding(BackfillCursor {
+                next: march(1),
+                last: march(3),
+            }),
+        );
+        run(&provider, &publisher, &store, DAY).await;
+        let logs = String::from_utf8(captured.0.lock().expect("lock").clone()).expect("utf8");
+        let lines = |date: NaiveDate| {
+            logs.lines()
+                .filter(|line| line.contains(&format!("date={date}")))
+                .collect::<Vec<_>>()
+        };
+        let [stored] = lines(march(1))[..] else {
+            panic!("one line for the stored day: {logs}")
+        };
+        assert!(stored.contains("INFO") && stored.contains("backfill day stored"));
+        assert!(stored.contains("metrics=1"));
+        let [empty] = lines(march(2))[..] else {
+            panic!("one line for the empty day: {logs}")
+        };
+        assert!(empty.contains("INFO") && empty.contains("garmin returned no figures"));
+        let [failed] = lines(march(3))[..] else {
+            panic!("one line for the failed day: {logs}")
+        };
+        assert!(failed.contains("WARN") && !failed.contains("INFO"));
+        assert!(!logs.contains("987654"));
     }
 
     #[tokio::test(start_paused = true)]
