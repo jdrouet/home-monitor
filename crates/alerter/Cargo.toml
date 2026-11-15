@@ -12,9 +12,12 @@ domain.workspace = true
 mqtt.workspace = true
 ntfy.workspace = true
 state-file.workspace = true
-tokio = { workspace = true, features = ["macros", "net", "rt", "time"] }
+tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
 tracing-subscriber.workspace = true
 use-cases.workspace = true
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
 
 [lints]
 workspace = true

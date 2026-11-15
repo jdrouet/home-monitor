@@ -37,6 +37,7 @@ dependencies = [
  "ntfy",
  "state-file",
  "tokio",
+ "tower",
  "tracing-subscriber",
  "use-cases",
 ]
