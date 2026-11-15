@@ -3,8 +3,12 @@ mod advertisement_source;
 mod alert_state_store;
 mod alert_summary;
 mod alerts;
+mod collect_health;
 mod collect_weather;
 mod collector;
+mod daily_health;
+mod health_day;
+mod health_provider;
 mod history;
 mod latest_values;
 mod measurement_store;
@@ -22,8 +26,12 @@ pub use advertisement_source::AdvertisementSource;
 pub use alert_state_store::AlertStateStore;
 pub use alert_summary::{ActiveAlertLine, AlertSummary, ResolvedAlertLine, build_alert_summary};
 pub use alerts::Alerts;
+pub use collect_health::{HealthPull, collect_health};
 pub use collect_weather::collect_weather;
 pub use collector::Collector;
+pub use daily_health::DailyHealth;
+pub use health_day::HealthDay;
+pub use health_provider::HealthProvider;
 pub use history::{
     HISTORY_METRICS, HistoryChart, HistorySelection, Period, build_history, history_query,
 };

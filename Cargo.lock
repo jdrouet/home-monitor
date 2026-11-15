@@ -3612,6 +3612,7 @@ name = "use-cases"
 version = "0.1.0"
 dependencies = [
  "bthome",
+ "chrono",
  "domain",
  "tokio",
  "tracing",
