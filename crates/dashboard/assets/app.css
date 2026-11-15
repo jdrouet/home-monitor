@@ -171,6 +171,8 @@ main > section + section { margin-top: var(--space-5); }
 }
 .alert-time { margin-left: auto; }
 .alert-list--compact .alert-detail { display: none; }
+.alert-list:not(.alert-list--compact) .alert-detail { order: 1; flex-basis: 100%; }
+.section-heading + .alert-list, .section-heading + .notice { margin-top: var(--space-3); }
 .alert-list li.alert-more { padding: 0; }
 .alert-more a {
   display: flex;
@@ -224,6 +226,7 @@ main > section + section { margin-top: var(--space-5); }
 
 @media (min-width: 48rem) {
   .alert-list--compact .alert-detail { display: inline; }
+  .alert-list:not(.alert-list--compact) .alert-detail { order: 0; flex-basis: auto; }
   .card-grid { grid-template-columns: repeat(auto-fill, minmax(min(12rem, 100%), 1fr)); }
   .card--wide { grid-column: span 2; }
   main { padding: var(--space-5); }

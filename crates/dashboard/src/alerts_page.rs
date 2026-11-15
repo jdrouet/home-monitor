@@ -5,12 +5,13 @@ use domain::{AlertKind, Timestamp};
 use use_cases::AlertSummary;
 
 use crate::page::{self, Page};
-use crate::paris_time::paris_time;
+use crate::paris_time::{paris_hour_minute, paris_time};
 
 #[derive(Template)]
 #[template(path = "alerts.html")]
 struct AlertsPage<'a> {
     summary: Option<&'a AlertSummary>,
+    updated: String,
     page: Page,
 }
 
@@ -20,18 +21,21 @@ impl AlertsPage<'_> {
     }
 }
 
-/// `None` renders the page for an alerter that cannot be reached.
-pub fn render(summary: Option<&AlertSummary>) -> Response {
+/// `None` renders the page for an alerter that cannot be reached, with status 502.
+pub fn render(summary: Option<&AlertSummary>, now: Timestamp) -> Response {
     let page = AlertsPage {
         summary,
+        updated: paris_hour_minute(now),
         page: Page::Alerts,
     };
-    page::respond(&page, StatusCode::OK)
+    let status = summary.map_or(StatusCode::BAD_GATEWAY, |_| StatusCode::OK);
+    page::respond(&page, status)
 }
 
 #[cfg(test)]
 mod tests {
     use axum::body::to_bytes;
+    use axum::http::StatusCode;
     use chrono::DateTime;
     use domain::{AlertKind, Timestamp};
     use use_cases::{ActiveAlertLine, AlertSummary, ResolvedAlertLine};
@@ -45,11 +49,20 @@ mod tests {
         Timestamp::from_micros(instant.timestamp_micros())
     }
 
-    async fn page(summary: Option<&AlertSummary>) -> String {
-        let bytes = to_bytes(render(summary).into_body(), usize::MAX)
+    async fn response(summary: Option<&AlertSummary>) -> (StatusCode, String) {
+        let response = render(summary, at("2026-01-15T12:30:00Z"));
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("body reads");
-        String::from_utf8(bytes.to_vec()).expect("utf-8 body")
+        (
+            status,
+            String::from_utf8(bytes.to_vec()).expect("utf-8 body"),
+        )
+    }
+
+    async fn page(summary: Option<&AlertSummary>) -> String {
+        response(summary).await.1
     }
 
     fn summary() -> AlertSummary {
@@ -102,12 +115,15 @@ mod tests {
     async fn active_alerts_show_room_kind_temperature_and_start() {
         let html = page(Some(&summary())).await;
         assert!(html.contains("bedroom"));
-        assert!(html.contains("too hot"));
+        assert!(html.contains("Active (3)"));
+        assert!(html.contains("Too hot"));
         assert!(html.contains("21.3 °C at last notification"));
         assert!(html.contains("since 2026-01-15 13:30"));
         assert!(html.contains("office"));
-        assert!(html.contains("offline"));
-        assert!(html.contains("Garmin: login expired, since 2026-01-15 10:00"));
+        assert!(html.contains("Offline"));
+        assert!(html.contains("Login expired"));
+        assert!(html.contains("since 2026-01-15 10:00"));
+        assert!(!html.contains(r#"class="alert-list alert-list--compact""#));
         assert!(!html.contains("No active alerts."));
     }
 
@@ -116,10 +132,10 @@ mod tests {
         let html = page(Some(&summary())).await;
         assert!(html.contains("Resolved in the last 30 days"));
         assert!(html.contains("living room"));
-        assert!(html.contains("too cold"));
+        assert!(html.contains("Too cold"));
         assert!(html.contains("2026-07-15 10:00"));
         assert!(html.contains("2026-07-16 01:30"));
-        assert!(html.contains("Garmin: login expired, from 2026-03-01 09:00 to 2026-03-02 09:00"));
+        assert!(html.contains("2026-03-01 09:00 – 2026-03-02 09:00"));
         assert!(!html.contains("No alerts resolved"));
     }
 
@@ -133,10 +149,18 @@ mod tests {
 
     #[tokio::test]
     async fn without_a_summary_the_page_says_alerts_are_unavailable() {
-        let html = page(None).await;
+        let (status, html) = response(None).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert!(html.contains("Alerts unavailable"));
         assert_shell(&html, Page::Alerts);
         assert!(!html.contains("No active alerts."));
+    }
+
+    #[tokio::test]
+    async fn a_summary_gives_status_200_and_the_render_time() {
+        let (status, html) = response(Some(&empty())).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Updated 13:30"));
     }
 
     #[tokio::test]

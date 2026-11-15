@@ -108,16 +108,15 @@ async fn history(
 }
 
 async fn alerts(State(state): State<Arc<AppState>>) -> Response {
-    match state.alerter.alerts().await {
-        Ok(alert_state) => {
-            let summary = build_alert_summary(&state.thermometers, &alert_state);
-            alerts_page::render(Some(&summary))
-        }
-        Err(error) => {
-            error!(%error, "cannot read the alerts from the alerter");
-            (StatusCode::BAD_GATEWAY, alerts_page::render(None)).into_response()
-        }
-    }
+    let now = Timestamp::now();
+    let summary = state
+        .alerter
+        .alerts()
+        .await
+        .inspect_err(|error| error!(%error, "cannot read the alerts from the alerter"))
+        .ok()
+        .map(|alert_state| build_alert_summary(&state.thermometers, &alert_state));
+    alerts_page::render(summary.as_ref(), now)
 }
 
 async fn health(State(state): State<Arc<AppState>>) -> Response {
