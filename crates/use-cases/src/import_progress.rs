@@ -100,7 +100,11 @@ impl Loaded {
     fn work(&self, job: ImportJob) -> Work {
         if job == ImportJob::Workouts {
             return match self.activities {
-                Some(cursor) if cursor.done && cursor.catch_up.is_none() => Work::Nothing,
+                Some(cursor)
+                    if cursor.done && cursor.catch_up.is_none() && cursor.pending.is_none() =>
+                {
+                    Work::Nothing
+                }
                 _ => Work::Unknown,
             };
         }
@@ -142,7 +146,7 @@ fn estimate(
         .flatten()
         .is_some_and(|end| end.outcome == AttemptOutcome::Paused);
     if !running {
-        if let Some(blocking) = blocker(jobs, loaded, job, next) {
+        if let Some(blocking) = blocker(jobs, loaded, job) {
             return Some(ImportEta::WaitsFor { job: blocking });
         }
         if !paused {
@@ -169,16 +173,12 @@ fn estimate(
     })
 }
 
-/// The earlier job, in the current window, that is running, stopped or paused
-/// with work left, so the chain cannot have reached `job` first. A skipped job
-/// does not stop the chain.
-fn blocker(
-    jobs: &ImportStatus,
-    loaded: &Loaded,
-    job: ImportJob,
-    next: Timestamp,
-) -> Option<ImportJob> {
-    let since = shifted(next, DAY, false);
+/// The earlier job, in the current run, that is running, stopped or paused
+/// with work left, so the chain cannot have reached `job` first. The run is
+/// the one the latest daily pull started. A skipped job does not stop the
+/// chain, and neither does a catch-up that reached its page limit.
+fn blocker(jobs: &ImportStatus, loaded: &Loaded, job: ImportJob) -> Option<ImportJob> {
+    let since = latest(jobs, ImportJob::DailyPull)?.started;
     ImportJob::ALL
         .into_iter()
         .take_while(|earlier| *earlier != job)
@@ -194,7 +194,7 @@ fn holds_up(attempt: &ImportAttempt, work_left: bool) -> bool {
     attempt.ended.is_none_or(|end| match end.outcome {
         AttemptOutcome::Failed(reason) => reason != ImportFailure::ProgressUnreadable,
         AttemptOutcome::Paused => work_left,
-        AttemptOutcome::Done => false,
+        AttemptOutcome::Done | AttemptOutcome::Capped => false,
     })
 }
 
@@ -303,6 +303,7 @@ mod tests {
             next_pull: Some(at(DAY.as_secs().try_into().expect("small"))),
             ..ImportStatus::default()
         };
+        jobs.record(ImportJob::DailyPull, ended(0, AttemptOutcome::Done), at(0));
         for (job, attempt) in records {
             jobs.record(*job, *attempt, at(0));
         }
@@ -531,6 +532,122 @@ mod tests {
                 at: at(86_400 + 5 * 69)
             })
         );
+    }
+
+    #[test]
+    fn the_current_run_starts_with_the_latest_daily_pull_even_on_a_25_hour_day() {
+        let stores = Stores {
+            yearly: MemoryBackfill::holding(pending(5)),
+            archive: MemoryBackfill::holding(pending(5)),
+            ..Stores::quiet()
+        };
+        let mut jobs = jobs_with(&[(ImportJob::HealthHistory, running(1_800))]);
+        jobs.next_pull = Some(at(25 * 3_600));
+        let status = stores.status(jobs);
+        assert_eq!(
+            eta(&status, ImportJob::DailyArchive),
+            Some(ImportEta::WaitsFor {
+                job: ImportJob::HealthHistory
+            })
+        );
+    }
+
+    #[test]
+    fn a_run_before_the_latest_daily_pull_proves_nothing() {
+        let stores = Stores {
+            yearly: MemoryBackfill::holding(pending(5)),
+            archive: MemoryBackfill::holding(pending(5)),
+            ..Stores::quiet()
+        };
+        let stale = ended(-60, AttemptOutcome::Failed(ImportFailure::Throttled));
+        let status = stores.status(jobs_with(&[(ImportJob::HealthHistory, stale)]));
+        assert_eq!(
+            eta(&status, ImportJob::DailyArchive),
+            Some(ImportEta::Unknown)
+        );
+    }
+
+    fn catching_up() -> ActivityCursor {
+        ActivityCursor {
+            done: true,
+            catch_up: Some(50),
+            pending: Some(0),
+            ..ActivityCursor::fresh()
+        }
+    }
+
+    #[test]
+    fn a_catch_up_cut_off_by_the_page_cap_does_not_hold_up_the_archive_days() {
+        let stores = Stores {
+            archive: MemoryBackfill::holding(pending(5)),
+            activities: MemoryCursor::holding(catching_up()),
+            ..Stores::quiet()
+        };
+        let capped = ended(10, AttemptOutcome::Capped);
+        let stopped = ended(1_000, AttemptOutcome::Failed(ImportFailure::Throttled));
+        let status = stores.status(jobs_with(&[
+            (ImportJob::Workouts, capped),
+            (ImportJob::DailyArchive, stopped),
+        ]));
+        assert_eq!(
+            eta(&status, ImportJob::DailyArchive),
+            Some(ImportEta::Unknown)
+        );
+        assert_eq!(eta(&status, ImportJob::Workouts), Some(ImportEta::Unknown));
+    }
+
+    #[test]
+    fn a_catch_up_paused_by_the_deadline_does_hold_up_the_archive_days() {
+        let stores = Stores {
+            archive: MemoryBackfill::holding(pending(5)),
+            activities: MemoryCursor::holding(catching_up()),
+            ..Stores::quiet()
+        };
+        let status = stores.status(jobs_with(&[
+            (ImportJob::Workouts, paused(10)),
+            (ImportJob::DailyArchive, paused(1_000)),
+        ]));
+        assert_eq!(
+            eta(&status, ImportJob::DailyArchive),
+            Some(ImportEta::WaitsFor {
+                job: ImportJob::Workouts
+            })
+        );
+    }
+
+    #[test]
+    fn a_capped_catch_up_with_a_paused_archive_estimates_the_archive_from_the_next_pull() {
+        let stores = Stores {
+            archive: MemoryBackfill::holding(pending(5)),
+            activities: MemoryCursor::holding(catching_up()),
+            ..Stores::quiet()
+        };
+        let status = stores.status(jobs_with(&[
+            (ImportJob::Workouts, ended(10, AttemptOutcome::Capped)),
+            (ImportJob::DailyArchive, paused(1_000)),
+        ]));
+        assert_eq!(
+            eta(&status, ImportJob::DailyArchive),
+            Some(ImportEta::At {
+                at: at(86_400 + 5 * 69)
+            })
+        );
+    }
+
+    #[test]
+    fn an_interrupted_first_catch_up_page_is_unfinished_work() {
+        let first_page = ActivityCursor {
+            done: true,
+            catch_up: None,
+            pending: Some(7),
+            ..ActivityCursor::fresh()
+        };
+        let stores = Stores {
+            activities: MemoryCursor::holding(first_page),
+            ..Stores::quiet()
+        };
+        let status = stores.status(jobs_with(&[(ImportJob::Workouts, running(10))]));
+        assert_eq!(eta(&status, ImportJob::Workouts), Some(ImportEta::Unknown));
     }
 
     #[test]

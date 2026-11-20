@@ -147,7 +147,7 @@ impl<H: ArchiveSource, A: RawArchive, C: ActivityCursorStore> ActivityImport<'_,
             opened = Some(open);
             pages += 1;
         }
-        RunEnd::OutOfTime
+        RunEnd::Capped
     }
 
     /// Notes the newest activity as the start of this pass and saves it before
@@ -531,7 +531,7 @@ mod tests {
     async fn the_catch_up_cap_keeps_its_progress_for_the_next_run() {
         let (source, archive) = (source_with(0..100), MemoryArchive::default());
         let store = MemoryCursor::holding(caught_up(None));
-        assert_eq!(run(&source, &archive, &store).await, RunEnd::OutOfTime);
+        assert_eq!(run(&source, &archive, &store).await, RunEnd::Capped);
         assert_eq!(source.pages().len(), 11);
         assert_eq!(
             store.stored(),
@@ -541,7 +541,7 @@ mod tests {
                 ..caught_up(None)
             })
         );
-        assert_eq!(run(&source, &archive, &store).await, RunEnd::OutOfTime);
+        assert_eq!(run(&source, &archive, &store).await, RunEnd::Capped);
         assert_eq!(source.pages()[11], (45, 5));
         assert_eq!(store.stored().and_then(|cursor| cursor.catch_up), Some(95));
     }

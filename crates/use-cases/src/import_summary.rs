@@ -61,7 +61,7 @@ fn line(job: ImportJob, status: Option<&ImportJobStatus>) -> ImportLine {
             ImportState::Partial
         }
         Some(AttemptOutcome::Done) => ImportState::Worked,
-        Some(AttemptOutcome::Paused) => ImportState::CatchingUp,
+        Some(AttemptOutcome::Paused | AttemptOutcome::Capped) => ImportState::CatchingUp,
         Some(AttemptOutcome::Failed(_)) => ImportState::Failed,
     };
     let counts = end.and_then(|end| counts_text(job, end.counts));

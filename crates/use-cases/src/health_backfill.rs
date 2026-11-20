@@ -34,6 +34,8 @@ pub enum RunEnd {
     Done,
     /// The next step does not fit before the deadline.
     OutOfTime,
+    /// The activity catch-up read its page limit with time to spare.
+    Capped,
     /// The cursor could not be read, so nothing was attempted.
     Skipped,
     /// A session, fetch, publish or save failed.
@@ -46,6 +48,7 @@ impl RunEnd {
         match self {
             Self::Done => AttemptOutcome::Done,
             Self::OutOfTime => AttemptOutcome::Paused,
+            Self::Capped => AttemptOutcome::Capped,
             Self::Skipped => AttemptOutcome::Failed(ImportFailure::ProgressUnreadable),
             Self::Stopped(reason) => AttemptOutcome::Failed(reason),
         }
@@ -995,6 +998,7 @@ mod tests {
         for (end, outcome) in [
             (RunEnd::Done, AttemptOutcome::Done),
             (RunEnd::OutOfTime, AttemptOutcome::Paused),
+            (RunEnd::Capped, AttemptOutcome::Capped),
             (
                 RunEnd::Skipped,
                 AttemptOutcome::Failed(ImportFailure::ProgressUnreadable),

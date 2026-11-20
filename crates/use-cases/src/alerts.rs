@@ -245,13 +245,11 @@ impl Alerts {
             let Some((failure, retry_at)) = give_up(*job, job_status) else {
                 continue;
             };
+            let notification = import_notification(*job, failure, &local_time(retry_at));
             if !self.import_due(*job, retry_at, now()) {
                 continue;
             }
-            match notifier
-                .notify(&import_notification(*job, failure, &local_time(retry_at)))
-                .await
-            {
+            match notifier.notify(&notification).await {
                 Ok(()) => {
                     self.imports_notified.borrow_mut().insert(*job, retry_at);
                     self.save(store, now());
