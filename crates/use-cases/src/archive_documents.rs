@@ -1,4 +1,4 @@
-use domain::Timestamp;
+use domain::{ImportFailure, Timestamp};
 use tracing::warn;
 
 use crate::import_window::{Fit, Opened, fits};
@@ -14,7 +14,7 @@ pub(crate) enum Kept {
     /// The session is due for replacement.
     SessionAge,
     /// Garmin or the archive failed; the run resumes after the next pull.
-    Stopped,
+    Stopped(ImportFailure),
 }
 
 /// Fetches and stores the documents the archive does not hold yet, in order.
@@ -37,7 +37,7 @@ pub(crate) async fn keep_missing<H: ArchiveSource, A: RawArchive>(
             Ok(false) => {}
             Err(error) => {
                 warn!(%error, file, "cannot look in the archive, stopping");
-                return Kept::Stopped;
+                return Kept::Stopped(ImportFailure::ArchiveUnavailable);
             }
         }
         match fits(until, opened.at, clock) {
@@ -45,15 +45,15 @@ pub(crate) async fn keep_missing<H: ArchiveSource, A: RawArchive>(
             Fit::Deadline => return Kept::Deadline,
             Fit::SessionAge => return Kept::SessionAge,
         }
-        if !fetch(source, archive, opened, *document, *key, archive_key).await {
-            return Kept::Stopped;
+        if let Err(reason) = fetch(source, archive, opened, *document, *key, archive_key).await {
+            return Kept::Stopped(reason);
         }
         fetched += 1;
     }
     Kept::Complete { fetched }
 }
 
-/// Fetches one document and stores the outcome; `false` when either failed.
+/// Fetches one document and stores the outcome; the reason when either failed.
 async fn fetch<H: ArchiveSource, A: RawArchive>(
     source: &H,
     archive: &A,
@@ -61,13 +61,13 @@ async fn fetch<H: ArchiveSource, A: RawArchive>(
     document: H::Document,
     key: DocumentKey,
     archive_key: &ArchiveKey,
-) -> bool {
+) -> Result<(), ImportFailure> {
     let file = H::file_name(document);
     let fetched = match source.document(&opened.session, document, key).await {
         Ok(fetched) => fetched,
         Err(error) => {
             log_failure::<H>(&error, file);
-            return false;
+            return Err(H::failure(&error));
         }
     };
     let stored = match fetched {
@@ -77,9 +77,9 @@ async fn fetch<H: ArchiveSource, A: RawArchive>(
     };
     if let Err(error) = stored {
         warn!(%error, file, "cannot write to the archive, stopping");
-        return false;
+        return Err(ImportFailure::ArchiveUnavailable);
     }
-    true
+    Ok(())
 }
 
 fn log_failure<H: ArchiveSource>(error: &H::Error, file: &str) {

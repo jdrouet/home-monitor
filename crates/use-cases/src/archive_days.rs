@@ -1,11 +1,12 @@
 use chrono::NaiveDate;
-use domain::Timestamp;
+use domain::{ImportCounts, ImportFailure, Timestamp};
 use tracing::{error, info};
 
 use crate::archive_documents::{Kept, keep_missing};
 use crate::import_window::{open_session, turn};
 use crate::{
     ArchiveKey, ArchiveSource, BackfillCursor, BackfillStore, DocumentKey, RawArchive, RunEnd,
+    RunOutcome,
 };
 
 /// Keeps Garmin's original documents of completed days, resuming from a
@@ -26,6 +27,18 @@ impl<H: ArchiveSource, A: RawArchive, S: BackfillStore> ArchiveDays<'_, H, A, S>
         plan: impl FnOnce(Option<BackfillCursor>) -> BackfillCursor,
         until: Timestamp,
         clock: impl Fn() -> Timestamp,
+    ) -> RunOutcome {
+        let mut counts = ImportCounts::default();
+        let end = self.steps(plan, until, clock, &mut counts).await;
+        RunOutcome { end, counts }
+    }
+
+    async fn steps(
+        &self,
+        plan: impl FnOnce(Option<BackfillCursor>) -> BackfillCursor,
+        until: Timestamp,
+        clock: impl Fn() -> Timestamp,
+        counts: &mut ImportCounts,
     ) -> RunEnd {
         let mut cursor = match self.cursor(plan) {
             Ok(cursor) => cursor,
@@ -54,13 +67,14 @@ impl<H: ArchiveSource, A: RawArchive, S: BackfillStore> ArchiveDays<'_, H, A, S>
                 Kept::Complete { fetched } => info!(%date, fetched, "day archived"),
                 Kept::Deadline => return RunEnd::OutOfTime,
                 Kept::SessionAge => continue,
-                Kept::Stopped => return RunEnd::Stopped,
+                Kept::Stopped(reason) => return RunEnd::Stopped(reason),
             }
             let next = cursor.advanced();
             if let Err(error) = self.store.save(&next) {
                 error!(%error, "cannot save the archive cursor, stopping");
-                return RunEnd::Stopped;
+                return RunEnd::Stopped(ImportFailure::ProgressNotSaved);
             }
+            counts.stored += 1;
             cursor = next;
             opened = Some(open);
         }
@@ -81,7 +95,7 @@ impl<H: ArchiveSource, A: RawArchive, S: BackfillStore> ArchiveDays<'_, H, A, S>
         if Some(planned) != stored {
             self.store.save(&planned).map_err(|error| {
                 error!(%error, "cannot save the archive cursor, skipping the archive");
-                RunEnd::Stopped
+                RunEnd::Stopped(ImportFailure::ProgressNotSaved)
             })?;
         }
         if planned.is_done() {
@@ -111,11 +125,12 @@ mod tests {
     use std::time::Duration;
 
     use chrono::NaiveDate;
+    use domain::{ImportCounts, ImportFailure};
 
     use crate::test_archive::{
         MemoryArchive, MemoryBackfill, ScriptedSource, Stored, TestError, after, clock,
     };
-    use crate::{ArchiveDays, ArchiveKey, BackfillCursor, Fetched, RunEnd};
+    use crate::{ArchiveDays, ArchiveKey, BackfillCursor, Fetched, RunEnd, RunOutcome};
 
     const DAY: Duration = Duration::from_secs(86_400);
 
@@ -144,6 +159,15 @@ mod tests {
         store: &MemoryBackfill,
         window: Duration,
     ) -> RunEnd {
+        outcome(source, archive, store, window).await.end
+    }
+
+    async fn outcome(
+        source: &ScriptedSource,
+        archive: &MemoryArchive,
+        store: &MemoryBackfill,
+        window: Duration,
+    ) -> RunOutcome {
         ArchiveDays {
             source,
             archive,
@@ -165,7 +189,7 @@ mod tests {
         };
         let store = MemoryBackfill::default();
         let end = run(&source, &MemoryArchive::default(), &store, DAY).await;
-        assert_eq!(end, RunEnd::Stopped);
+        assert_eq!(end, RunEnd::Stopped(ImportFailure::BadAnswer));
         assert_eq!(store.saves(), [BackfillCursor::rolling(None, today(), &[])]);
         assert!(source.requested().is_empty());
     }
@@ -223,11 +247,18 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_failing_document_stops_without_advancing_and_only_the_missing_is_redone() {
-        for error in [TestError::Session, TestError::Throttled, TestError::Other] {
+        for (error, reason) in [
+            (TestError::Session, ImportFailure::LoginRejected),
+            (TestError::Throttled, ImportFailure::Throttled),
+            (TestError::Other, ImportFailure::BadAnswer),
+        ] {
             let (source, archive) = (ScriptedSource::default(), MemoryArchive::default());
             source.script([Ok(Fetched::Body(vec![1])), Err(error)]);
             let store = MemoryBackfill::holding(days(1, 2));
-            assert_eq!(run(&source, &archive, &store, DAY).await, RunEnd::Stopped);
+            assert_eq!(
+                run(&source, &archive, &store, DAY).await,
+                RunEnd::Stopped(reason)
+            );
             assert_eq!(store.stored(), Some(days(1, 2)));
             assert_eq!(archive.count(), 1);
             assert_eq!(run(&source, &archive, &store, DAY).await, RunEnd::Done);
@@ -250,7 +281,10 @@ mod tests {
         for (archive, fetches) in [(unavailable, 0), (unwritable, 1)] {
             let source = ScriptedSource::default();
             let store = MemoryBackfill::holding(days(1, 2));
-            assert_eq!(run(&source, &archive, &store, DAY).await, RunEnd::Stopped);
+            assert_eq!(
+                run(&source, &archive, &store, DAY).await,
+                RunEnd::Stopped(ImportFailure::ArchiveUnavailable)
+            );
             assert_eq!(source.requested().len(), fetches);
             assert_eq!(store.stored(), Some(days(1, 2)));
         }
@@ -295,5 +329,72 @@ mod tests {
         let end = run(&source, &MemoryArchive::default(), &store, DAY).await;
         assert_eq!(end, RunEnd::Skipped);
         assert_eq!(source.opens(), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_denied_marker_write_stops_with_the_archive_reason() {
+        let source = ScriptedSource::default();
+        source.script([Ok(Fetched::Denied)]);
+        let archive = MemoryArchive {
+            put_fails: true,
+            ..MemoryArchive::default()
+        };
+        let store = MemoryBackfill::holding(days(1, 1));
+        let end = run(&source, &archive, &store, DAY).await;
+        assert_eq!(end, RunEnd::Stopped(ImportFailure::ArchiveUnavailable));
+        assert_eq!(store.stored(), Some(days(1, 1)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_save_stops_with_its_reason_and_the_cursor_stays() {
+        let first = MemoryBackfill {
+            save_fails: true,
+            ..MemoryBackfill::default()
+        };
+        let later = MemoryBackfill {
+            save_fails: true,
+            stored: std::sync::Mutex::new(Some(days(1, 2))),
+            ..MemoryBackfill::default()
+        };
+        for (store, requests) in [(&first, 0), (&later, 2)] {
+            let source = ScriptedSource::default();
+            let end = run(&source, &MemoryArchive::default(), store, DAY).await;
+            assert_eq!(end, RunEnd::Stopped(ImportFailure::ProgressNotSaved));
+            assert_eq!(source.requested().len(), requests);
+        }
+        assert_eq!(first.stored(), None);
+        assert_eq!(later.stored(), Some(days(1, 2)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_stored_count_is_the_days_passed_including_after_a_session_reopen() {
+        let source = ScriptedSource {
+            document_delay: Duration::from_secs(1000),
+            ..ScriptedSource::default()
+        };
+        let store = MemoryBackfill::holding(days(1, 2));
+        let done = outcome(&source, &MemoryArchive::default(), &store, DAY).await;
+        assert_eq!(done.end, RunEnd::Done);
+        assert_eq!(
+            done.counts,
+            ImportCounts {
+                stored: 2,
+                ..ImportCounts::default()
+            }
+        );
+        assert_eq!(source.opens(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_deadline_is_a_pause_that_keeps_the_days_passed() {
+        let source = ScriptedSource {
+            document_delay: Duration::from_secs(20),
+            ..ScriptedSource::default()
+        };
+        let store = MemoryBackfill::holding(days(1, 3));
+        let window = Duration::from_secs(520);
+        let paused = outcome(&source, &MemoryArchive::default(), &store, window).await;
+        assert_eq!(paused.end, RunEnd::OutOfTime);
+        assert_eq!(paused.counts.stored, 1);
     }
 }

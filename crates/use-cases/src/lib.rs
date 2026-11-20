@@ -67,9 +67,9 @@ pub use daily_health::DailyHealth;
 pub use document_key::DocumentKey;
 pub use fetched::Fetched;
 pub use health::{HEALTH_METRICS, HealthRow, build_health};
-pub use health_backfill::{HealthBackfill, RunEnd};
+pub use health_backfill::{HealthBackfill, RunEnd, RunOutcome};
 pub use health_day::HealthDay;
-pub use health_import::HealthImport;
+pub use health_import::{HealthImport, PullWindow};
 pub use health_provider::HealthProvider;
 pub use history::{
     HISTORY_METRICS, HistoryChart, HistorySelection, Period, build_history, history_query,

@@ -60,7 +60,7 @@ pub(crate) async fn open_session<H: HealthProvider>(
         }),
         Err(error) => {
             warn!(%error, "import session failed, resuming after the next pull");
-            Err(RunEnd::Stopped)
+            Err(RunEnd::Stopped(H::failure(&error)))
         }
     }
 }

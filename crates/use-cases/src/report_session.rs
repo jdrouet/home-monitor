@@ -14,8 +14,8 @@ pub async fn report_session<P: Publisher>(
 ) {
     let value = match pull {
         HealthPull::Completed { .. } => 1.0,
-        HealthPull::SessionFailed => 0.0,
-        HealthPull::Throttled | HealthPull::Failed => return,
+        HealthPull::SessionFailed { .. } => 0.0,
+        HealthPull::Throttled { .. } | HealthPull::Failed(_) => return,
     };
     let measurement = Measurement {
         timestamp: at,
@@ -37,7 +37,9 @@ mod tests {
     use std::io;
     use std::sync::Mutex;
 
-    use domain::{Measurement, Metric, SourceId, SourceKind, Timestamp};
+    use domain::{
+        ImportCounts, ImportFailure, Measurement, Metric, SourceId, SourceKind, Timestamp,
+    };
 
     use crate::{HealthPull, Publisher};
 
@@ -70,6 +72,12 @@ mod tests {
         }
     }
 
+    fn session_failed() -> HealthPull {
+        HealthPull::SessionFailed {
+            counts: ImportCounts::default(),
+        }
+    }
+
     async fn report(publisher: &TestPublisher, pull: HealthPull) {
         let source_id = SourceId::from("garmin".to_owned());
         report_session(publisher, &source_id, &pull, Timestamp::from_micros(7)).await;
@@ -78,7 +86,14 @@ mod tests {
     #[tokio::test]
     async fn a_completed_pull_publishes_one_stamped_at_the_pull() {
         let publisher = TestPublisher::default();
-        report(&publisher, HealthPull::Completed { fetched: vec![] }).await;
+        report(
+            &publisher,
+            HealthPull::Completed {
+                fetched: vec![],
+                counts: ImportCounts::default(),
+            },
+        )
+        .await;
         let published = publisher.published.lock().expect("lock");
         assert_eq!(published.len(), 1);
         let (kind, id, batch) = &published[0];
@@ -99,7 +114,7 @@ mod tests {
     #[tokio::test]
     async fn a_failed_session_publishes_zero() {
         let publisher = TestPublisher::default();
-        report(&publisher, HealthPull::SessionFailed).await;
+        report(&publisher, session_failed()).await;
         let published = publisher.published.lock().expect("lock");
         assert_eq!(published[0].2[0].value, 0.0);
         assert_eq!(published[0].2[0].metric, Metric::SessionValid);
@@ -108,8 +123,14 @@ mod tests {
     #[tokio::test]
     async fn throttled_and_failed_pulls_publish_nothing() {
         let publisher = TestPublisher::default();
-        report(&publisher, HealthPull::Throttled).await;
-        report(&publisher, HealthPull::Failed).await;
+        report(
+            &publisher,
+            HealthPull::Throttled {
+                counts: ImportCounts::default(),
+            },
+        )
+        .await;
+        report(&publisher, HealthPull::Failed(ImportFailure::Unreachable)).await;
         assert!(publisher.published.lock().expect("lock").is_empty());
     }
 
@@ -119,7 +140,7 @@ mod tests {
             failing: true,
             ..TestPublisher::default()
         };
-        report(&publisher, HealthPull::SessionFailed).await;
+        report(&publisher, session_failed()).await;
         assert!(publisher.published.lock().expect("lock").is_empty());
     }
 }

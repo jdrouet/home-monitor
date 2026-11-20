@@ -21,7 +21,7 @@ use tokio::net::TcpListener;
 use tokio::time::sleep;
 use use_cases::{
     ActivityCursorStore, ActivityImport, ArchiveDays, ArchiveSource, BackfillStore, HealthBackfill,
-    HealthImport, Publisher, RawArchive, collect_health, report_session,
+    HealthImport, Publisher, PullWindow, RawArchive, collect_health, report_session,
 };
 
 const CLIENT_ID: &str = "health-collector";
@@ -144,10 +144,13 @@ async fn pull_forever<
             .after_pull(
                 &pull,
                 &days,
-                paris_date(started),
-                next,
-                Timestamp::now,
-                completed_day_stamp,
+                PullWindow {
+                    today: paris_date(started),
+                    until: next,
+                    clock: Timestamp::now,
+                    day_stamp: completed_day_stamp,
+                },
+                |_, _| {},
             )
             .await;
         sleep(wait_until(next, Timestamp::now())).await;
