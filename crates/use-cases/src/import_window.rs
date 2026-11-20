@@ -9,6 +9,8 @@ use crate::{HealthProvider, RunEnd};
 /// Wait before every Garmin step, a session open or one unit of work, to stay
 /// far below the rate that gets clients blocked.
 pub(crate) const STEP_SPACING: Duration = Duration::from_secs(60);
+/// Mean of the 3 to 6 s random gap left between two Garmin requests.
+pub(crate) const REQUEST_GAP: Duration = Duration::from_millis(4500);
 /// Time left before the deadline that a step must not eat into.
 pub(crate) const MARGIN: Duration = Duration::from_secs(5 * 60);
 /// A session is replaced after this long, well within the token's hour.
@@ -60,7 +62,7 @@ pub(crate) async fn open_session<H: HealthProvider>(
         }),
         Err(error) => {
             warn!(%error, "import session failed, resuming after the next pull");
-            Err(RunEnd::Stopped)
+            Err(RunEnd::Stopped(H::failure(&error)))
         }
     }
 }

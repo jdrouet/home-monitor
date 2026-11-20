@@ -35,9 +35,13 @@ dependencies = [
  "domain",
  "mqtt",
  "ntfy",
+ "paris-clock",
+ "reqwest",
  "state-file",
+ "thiserror",
  "tokio",
  "tower",
+ "tracing",
  "tracing-subscriber",
  "use-cases",
 ]
@@ -800,7 +804,6 @@ dependencies = [
  "askama",
  "axum",
  "chrono",
- "chrono-tz",
  "config",
  "domain",
  "paris-clock",
@@ -1477,6 +1480,7 @@ dependencies = [
 name = "domain"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde",
  "serde_json",
  "thiserror",
@@ -1684,6 +1688,7 @@ name = "garmin-connect"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "domain",
  "reqwest",
  "serde",
  "serde_json",

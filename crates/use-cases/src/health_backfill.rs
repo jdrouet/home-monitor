@@ -1,5 +1,8 @@
 use chrono::NaiveDate;
-use domain::{Measurement, SourceId, SourceKind, Timestamp};
+use domain::{
+    AttemptEnd, AttemptOutcome, ImportAttempt, ImportCounts, ImportFailure, Measurement, SourceId,
+    SourceKind, Timestamp,
+};
 use tracing::{error, info, warn};
 
 use crate::import_window::{SESSION_MAX_AGE, open_session, turn};
@@ -14,9 +17,13 @@ pub struct HealthBackfill<'a, H, P, S> {
     pub source_id: &'a SourceId,
 }
 
+/// How one day passed, or why the run must stop.
 enum Step {
-    Next,
-    Stop,
+    Stored,
+    Empty,
+    /// The day failed for a reason confined to it.
+    Skipped,
+    Stop(ImportFailure),
 }
 
 /// Why a run ended. `Stopped` means Garmin or the disk refused something that
@@ -27,10 +34,45 @@ pub enum RunEnd {
     Done,
     /// The next step does not fit before the deadline.
     OutOfTime,
+    /// The activity catch-up read its page limit with time to spare.
+    Capped,
     /// The cursor could not be read, so nothing was attempted.
     Skipped,
     /// A session, fetch, publish or save failed.
-    Stopped,
+    Stopped(ImportFailure),
+}
+
+impl RunEnd {
+    /// How this end reads as an attempt outcome.
+    pub fn outcome(self) -> AttemptOutcome {
+        match self {
+            Self::Done => AttemptOutcome::Done,
+            Self::OutOfTime => AttemptOutcome::Paused,
+            Self::Capped => AttemptOutcome::Capped,
+            Self::Skipped => AttemptOutcome::Failed(ImportFailure::ProgressUnreadable),
+            Self::Stopped(reason) => AttemptOutcome::Failed(reason),
+        }
+    }
+}
+
+/// How a run ended and what it did before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunOutcome {
+    pub end: RunEnd,
+    pub counts: ImportCounts,
+}
+
+impl RunOutcome {
+    pub fn attempt(self, started: Timestamp, ended: Timestamp) -> ImportAttempt {
+        ImportAttempt {
+            started,
+            ended: Some(AttemptEnd {
+                at: ended,
+                outcome: self.end.outcome(),
+                counts: self.counts,
+            }),
+        }
+    }
 }
 
 impl<H: HealthProvider, P: Publisher, S: BackfillStore> HealthBackfill<'_, H, P, S> {
@@ -44,6 +86,19 @@ impl<H: HealthProvider, P: Publisher, S: BackfillStore> HealthBackfill<'_, H, P,
         until: Timestamp,
         clock: impl Fn() -> Timestamp,
         day_stamp: impl Fn(NaiveDate) -> Timestamp,
+    ) -> RunOutcome {
+        let mut counts = ImportCounts::default();
+        let end = self.steps(plan, until, clock, day_stamp, &mut counts).await;
+        RunOutcome { end, counts }
+    }
+
+    async fn steps(
+        &self,
+        plan: impl FnOnce(Option<BackfillCursor>) -> BackfillCursor,
+        until: Timestamp,
+        clock: impl Fn() -> Timestamp,
+        day_stamp: impl Fn(NaiveDate) -> Timestamp,
+        counts: &mut ImportCounts,
     ) -> RunEnd {
         let mut cursor = match self.cursor(plan) {
             Ok(cursor) => cursor,
@@ -62,13 +117,16 @@ impl<H: HealthProvider, P: Publisher, S: BackfillStore> HealthBackfill<'_, H, P,
                 continue;
             }
             let date = cursor.next;
-            if let Step::Stop = self.day(&open.session, date, day_stamp(date)).await {
-                return RunEnd::Stopped;
+            match self.day(&open.session, date, day_stamp(date)).await {
+                Step::Stored => counts.stored += 1,
+                Step::Empty => counts.empty += 1,
+                Step::Skipped => counts.failed += 1,
+                Step::Stop(reason) => return RunEnd::Stopped(reason),
             }
             let next = cursor.advanced();
             if let Err(error) = self.store.save(&next) {
                 error!(%error, "cannot save the backfill cursor, stopping");
-                return RunEnd::Stopped;
+                return RunEnd::Stopped(ImportFailure::ProgressNotSaved);
             }
             cursor = next;
             opened = Some(open);
@@ -90,7 +148,7 @@ impl<H: HealthProvider, P: Publisher, S: BackfillStore> HealthBackfill<'_, H, P,
         if Some(planned) != stored {
             self.store.save(&planned).map_err(|error| {
                 error!(%error, "cannot save the backfill cursor, skipping the import");
-                RunEnd::Stopped
+                RunEnd::Stopped(ImportFailure::ProgressNotSaved)
             })?;
             info!(next = %planned.next, last = %planned.last, "health backfill range saved");
         }
@@ -105,11 +163,11 @@ impl<H: HealthProvider, P: Publisher, S: BackfillStore> HealthBackfill<'_, H, P,
             Ok(health) => health,
             Err(error) if H::is_session_error(&error) || H::is_throttled(&error) => {
                 warn!(%error, "backfill stopped, resuming after the next pull");
-                return Step::Stop;
+                return Step::Stop(H::failure(&error));
             }
             Err(error) => {
                 warn!(%error, %date, "backfill fetch failed, skipping this day");
-                return Step::Next;
+                return Step::Skipped;
             }
         };
         self.publish(date, &health.measurements(self.source_id, stamp))
@@ -119,7 +177,7 @@ impl<H: HealthProvider, P: Publisher, S: BackfillStore> HealthBackfill<'_, H, P,
     async fn publish(&self, date: NaiveDate, batch: &[Measurement]) -> Step {
         if batch.is_empty() {
             info!(%date, "backfill day empty, garmin returned no figures");
-            return Step::Next;
+            return Step::Empty;
         }
         match self
             .publisher
@@ -128,11 +186,11 @@ impl<H: HealthProvider, P: Publisher, S: BackfillStore> HealthBackfill<'_, H, P,
         {
             Ok(()) => {
                 info!(%date, metrics = batch.len(), "backfill day stored");
-                Step::Next
+                Step::Stored
             }
             Err(error) => {
                 warn!(%error, %date, "backfill publish failed, resuming after the next pull");
-                Step::Stop
+                Step::Stop(ImportFailure::PublishFailed)
             }
         }
     }
@@ -148,14 +206,16 @@ mod tests {
     use std::time::Duration;
 
     use chrono::{Datelike, NaiveDate};
-    use domain::{Measurement, SourceId, SourceKind, Timestamp};
+    use domain::{
+        AttemptOutcome, ImportCounts, ImportFailure, Measurement, SourceId, SourceKind, Timestamp,
+    };
     use tokio::time::sleep;
     use tracing_subscriber::fmt::MakeWriter;
 
-    use crate::test_archive::{MemoryBackfill, START, after, clock};
+    use crate::test_archive::{MemoryBackfill, START, after, clock, counts};
     use crate::{BackfillCursor, DailyHealth, HealthBackfill, HealthProvider, Publisher};
 
-    use super::RunEnd;
+    use super::{RunEnd, RunOutcome};
 
     #[derive(Debug, Clone, Copy)]
     enum TestError {
@@ -308,7 +368,7 @@ mod tests {
         store: &MemoryBackfill,
         until: Timestamp,
         clock: impl Fn() -> Timestamp,
-    ) -> RunEnd {
+    ) -> RunOutcome {
         let source_id = SourceId::from("garmin".to_owned());
         HealthBackfill {
             provider,
@@ -342,7 +402,9 @@ mod tests {
         store: &MemoryBackfill,
         window: Duration,
     ) -> RunEnd {
-        run_with(provider, publisher, store, after(window), clock()).await
+        run_with(provider, publisher, store, after(window), clock())
+            .await
+            .end
     }
 
     fn three_days() -> BackfillCursor {
@@ -767,7 +829,8 @@ mod tests {
             source_id: &source_id,
         }
         .run(|_| done, after(DAY), clock(), stamp)
-        .await;
+        .await
+        .end;
         assert_eq!(end, RunEnd::Done);
         assert_eq!(store.stored(), Some(done));
         assert_eq!(provider.opens(), 0);
@@ -811,8 +874,12 @@ mod tests {
         );
     }
 
+    fn stopped(reason: ImportFailure) -> RunEnd {
+        RunEnd::Stopped(reason)
+    }
+
     #[tokio::test(start_paused = true)]
-    async fn failures_end_stopped() {
+    async fn failures_end_stopped_with_their_reason_and_the_cursor_stays() {
         let publisher = TestPublisher::default();
         let store = || MemoryBackfill::holding(three_days());
         let open_fails = TestProvider {
@@ -827,21 +894,29 @@ mod tests {
             results: HashMap::from([(jan(1), Err(TestError::Throttled))]),
             ..TestProvider::default()
         };
-        for provider in [open_fails, session, throttled] {
+        for (provider, reason) in [
+            (open_fails, ImportFailure::LoginRejected),
+            (session, ImportFailure::LoginRejected),
+            (throttled, ImportFailure::Throttled),
+        ] {
+            let store = store();
             assert_eq!(
-                end(&provider, &publisher, &store(), DAY).await,
-                RunEnd::Stopped
+                end(&provider, &publisher, &store, DAY).await,
+                stopped(reason)
             );
+            assert_eq!(store.stored(), Some(three_days()));
         }
         let failing = TestPublisher {
             failing: [stamp(jan(1)).as_micros()].into(),
             ..TestPublisher::default()
         };
         let provider = TestProvider::default();
+        let unpublished = store();
         assert_eq!(
-            end(&provider, &failing, &store(), DAY).await,
-            RunEnd::Stopped
+            end(&provider, &failing, &unpublished, DAY).await,
+            stopped(ImportFailure::PublishFailed)
         );
+        assert_eq!(unpublished.stored(), Some(three_days()));
         let unsaved = MemoryBackfill {
             save_fails: true,
             stored: Mutex::new(Some(three_days())),
@@ -849,15 +924,97 @@ mod tests {
         };
         assert_eq!(
             end(&provider, &publisher, &unsaved, DAY).await,
-            RunEnd::Stopped
+            stopped(ImportFailure::ProgressNotSaved)
         );
+        assert_eq!(unsaved.stored(), Some(three_days()));
         let unanchored = MemoryBackfill {
             save_fails: true,
             ..MemoryBackfill::default()
         };
         assert_eq!(
             end(&provider, &publisher, &unanchored, DAY).await,
-            RunEnd::Stopped
+            stopped(ImportFailure::ProgressNotSaved)
         );
+        assert_eq!(unanchored.stored(), None);
+    }
+
+    async fn outcome(
+        provider: &TestProvider,
+        publisher: &TestPublisher,
+        store: &MemoryBackfill,
+    ) -> RunOutcome {
+        run_with(provider, publisher, store, after(DAY), clock()).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn counts_follow_the_outcome_of_each_day() {
+        let provider = TestProvider {
+            results: HashMap::from([
+                (jan(1), Err(TestError::Day)),
+                (jan(2), Ok(DailyHealth::default())),
+            ]),
+            ..TestProvider::default()
+        };
+        let publisher = TestPublisher::default();
+        let store = MemoryBackfill::holding(three_days());
+        let done = outcome(&provider, &publisher, &store).await;
+        assert_eq!(done.end, RunEnd::Done);
+        assert_eq!(done.counts, counts(1, 1, 1));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stop_keeps_the_days_already_counted() {
+        let provider = TestProvider {
+            results: HashMap::from([(jan(2), Err(TestError::Throttled))]),
+            ..TestProvider::default()
+        };
+        let store = MemoryBackfill::holding(three_days());
+        let stopped = outcome(&provider, &TestPublisher::default(), &store).await;
+        assert_eq!(stopped.end, RunEnd::Stopped(ImportFailure::Throttled));
+        assert_eq!(stopped.counts, counts(1, 0, 0));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_unreadable_cursor_is_a_skip_with_no_counts() {
+        let store = MemoryBackfill {
+            load_fails: true,
+            ..MemoryBackfill::default()
+        };
+        let skipped = outcome(&TestProvider::default(), &TestPublisher::default(), &store).await;
+        assert_eq!(skipped.end, RunEnd::Skipped);
+        assert_eq!(skipped.counts, ImportCounts::default());
+    }
+
+    #[test]
+    fn an_end_reads_as_an_attempt_outcome() {
+        for (end, outcome) in [
+            (RunEnd::Done, AttemptOutcome::Done),
+            (RunEnd::OutOfTime, AttemptOutcome::Paused),
+            (RunEnd::Capped, AttemptOutcome::Capped),
+            (
+                RunEnd::Skipped,
+                AttemptOutcome::Failed(ImportFailure::ProgressUnreadable),
+            ),
+            (
+                RunEnd::Stopped(ImportFailure::GarminDown),
+                AttemptOutcome::Failed(ImportFailure::GarminDown),
+            ),
+        ] {
+            assert_eq!(end.outcome(), outcome);
+        }
+    }
+
+    #[test]
+    fn an_attempt_carries_the_outcome_and_counts() {
+        let run = RunOutcome {
+            end: RunEnd::OutOfTime,
+            counts: counts(2, 0, 1),
+        };
+        let attempt = run.attempt(Timestamp::from_micros(1), Timestamp::from_micros(2));
+        assert_eq!(attempt.started, Timestamp::from_micros(1));
+        let ended = attempt.ended.expect("ended");
+        assert_eq!(ended.at, Timestamp::from_micros(2));
+        assert_eq!(ended.outcome, AttemptOutcome::Paused);
+        assert_eq!(ended.counts, counts(2, 0, 1));
     }
 }

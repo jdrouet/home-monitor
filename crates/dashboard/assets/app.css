@@ -84,7 +84,7 @@ ul { list-style: none; }
 .app-header .brand { display: none; }
 .app-header ul {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(5.5rem, 100%), 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 .app-header a {
   display: flex;
@@ -127,7 +127,7 @@ main {
 }
 .notice--warn { background: var(--warn-bg); border: 1px solid var(--warn); }
 
-.notice--warn .badge {
+.notice .badge {
   display: block;
   width: fit-content;
   margin-bottom: var(--space-1);
@@ -199,10 +199,12 @@ main > section + section { margin-top: var(--space-5); }
   padding: var(--space-3);
 }
 .card--wide { grid-column: 1 / -1; }
+.card-grid.card-grid--jobs { grid-template-columns: repeat(auto-fill, minmax(min(20rem, 100%), 1fr)); }
+.job-status { font-size: var(--text-base); }
 .card h3 {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-1);
   font-size: var(--text-sm);
@@ -316,6 +318,10 @@ main > section + section { margin-top: var(--space-5); }
 }
 .chart-card .section-heading { margin-bottom: var(--space-3); }
 .chart-card .u-legend { color: var(--text); font-size: var(--text-sm); }
+
+@media (max-width: 22.5rem) {
+  .app-header a { font-size: 0.75rem; }
+}
 
 @media (min-width: 48rem) {
   .history-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-4) var(--space-5); }

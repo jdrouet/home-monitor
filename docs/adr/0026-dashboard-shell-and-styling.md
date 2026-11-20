@@ -1,6 +1,6 @@
 # ADR-0026: Dashboard shell and styling
 
-Status: accepted
+Status: accepted (fifth nav page added by ADR-0027)
 
 ## Context
 Issue #35 redesigns the dashboard. The four pages each carried their own copy of

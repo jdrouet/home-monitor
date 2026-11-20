@@ -16,6 +16,7 @@ const DEFAULT_STATE_FILE: &str = "/data/alerts.json";
 const DEFAULT_TOKEN_FILE: &str = "/tokens/garmin_tokens.json";
 const DEFAULT_ARCHIVE_DIR: &str = "/archive/garmin";
 const DEFAULT_ALERTER_URL: &str = "http://alerter:8080";
+const DEFAULT_HEALTH_COLLECTOR_URL: &str = "http://health-collector:8080";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -57,6 +58,8 @@ pub struct DashboardConfig {
     pub store_url: String,
     #[serde(default = "default_alerter_url")]
     pub alerter_url: String,
+    #[serde(default = "default_health_collector_url")]
+    pub health_collector_url: String,
 }
 
 fn default_alerter_url() -> String {
@@ -70,6 +73,12 @@ pub struct AlerterConfig {
     pub ntfy_url: String,
     #[serde(default = "default_state_file")]
     pub state_file: PathBuf,
+    #[serde(default = "default_health_collector_url")]
+    pub health_collector_url: String,
+}
+
+fn default_health_collector_url() -> String {
+    DEFAULT_HEALTH_COLLECTOR_URL.to_owned()
 }
 
 fn default_state_file() -> PathBuf {
@@ -208,6 +217,40 @@ mod tests {
         );
         let config: Config = text.parse().expect("config is valid");
         assert_eq!(config.dashboard.alerter_url, "http://other:9000");
+    }
+
+    #[test]
+    fn dashboard_health_collector_url_defaults_and_can_be_set() {
+        let config: Config = EXAMPLE.parse().expect("example is valid");
+        assert_eq!(
+            config.dashboard.health_collector_url,
+            "http://health-collector:8080"
+        );
+        let text = EXAMPLE.replace(
+            "store_url = \"http://store:8080\"\n",
+            "store_url = \"http://store:8080\"\nhealth_collector_url = \"http://other:9000\"\n",
+        );
+        let config: Config = text.parse().expect("config is valid");
+        assert_eq!(config.dashboard.health_collector_url, "http://other:9000");
+    }
+
+    #[test]
+    fn health_collector_url_defaults_to_the_collector_service() {
+        let config: Config = EXAMPLE.parse().expect("example is valid");
+        assert_eq!(
+            config.alerter.health_collector_url,
+            "http://health-collector:8080"
+        );
+    }
+
+    #[test]
+    fn health_collector_url_can_be_set() {
+        let text = EXAMPLE.replace(
+            "ntfy_url = \"http://ntfy\"\n",
+            "ntfy_url = \"http://ntfy\"\nhealth_collector_url = \"http://other:9000\"\n",
+        );
+        let config: Config = text.parse().expect("config is valid");
+        assert_eq!(config.alerter.health_collector_url, "http://other:9000");
     }
 
     #[test]

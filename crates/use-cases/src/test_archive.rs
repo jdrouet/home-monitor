@@ -7,13 +7,25 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use chrono::NaiveDate;
-use domain::Timestamp;
+use domain::{ImportCounts, Timestamp};
 use tokio::time::{Instant, sleep};
 
 use crate::{
     ActivityCursor, ActivityCursorStore, ActivityRef, ArchiveKey, ArchiveSource, BackfillCursor,
     BackfillStore, DailyHealth, DocumentKey, Fetched, HealthProvider, RawArchive,
 };
+
+pub(crate) fn counts(stored: u32, empty: u32, failed: u32) -> ImportCounts {
+    ImportCounts {
+        stored,
+        empty,
+        failed,
+    }
+}
+
+pub(crate) fn stored(count: u32) -> ImportCounts {
+    counts(count, 0, 0)
+}
 
 pub(crate) const START: i64 = 1_000_000_000_000_000;
 

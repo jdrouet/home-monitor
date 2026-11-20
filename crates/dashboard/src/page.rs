@@ -11,11 +11,18 @@ pub enum Page {
     History,
     Alerts,
     Health,
+    Imports,
 }
 
 impl Page {
     /// Every page, in navigation order.
-    pub const ALL: [Page; 4] = [Page::Overview, Page::History, Page::Alerts, Page::Health];
+    pub const ALL: [Page; 5] = [
+        Page::Overview,
+        Page::History,
+        Page::Alerts,
+        Page::Health,
+        Page::Imports,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -23,6 +30,7 @@ impl Page {
             Page::History => "History",
             Page::Alerts => "Alerts",
             Page::Health => "Health",
+            Page::Imports => "Imports",
         }
     }
 
@@ -32,13 +40,14 @@ impl Page {
             Page::History => "/history",
             Page::Alerts => "/alerts",
             Page::Health => "/health",
+            Page::Imports => "/imports",
         }
     }
 
     /// Seconds between reloads, or `None` for a page that never reloads.
     pub fn refresh_secs(self) -> Option<u32> {
         match self {
-            Page::Overview | Page::Alerts => Some(60),
+            Page::Overview | Page::Alerts | Page::Imports => Some(60),
             Page::Health => Some(300),
             Page::History => None,
         }
@@ -67,6 +76,19 @@ pub async fn read(response: Response) -> (StatusCode, String) {
         status,
         String::from_utf8(bytes.to_vec()).expect("utf-8 body"),
     )
+}
+
+/// Serves `router` on a free local port and returns the URL of its `/imports`.
+#[cfg(test)]
+pub async fn serve(router: axum::Router) -> reqwest::Url {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("binds");
+    let port = listener.local_addr().expect("address").port();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.expect("serves");
+    });
+    reqwest::Url::parse(&format!("http://127.0.0.1:{port}/imports")).expect("valid url")
 }
 
 /// Parses an RFC 3339 instant.
@@ -116,6 +138,7 @@ mod tests {
                 ("History", "/history", None),
                 ("Alerts", "/alerts", Some(60)),
                 ("Health", "/health", Some(300)),
+                ("Imports", "/imports", Some(60)),
             ]
         );
     }

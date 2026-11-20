@@ -11,8 +11,12 @@ config.workspace = true
 domain.workspace = true
 mqtt.workspace = true
 ntfy.workspace = true
+paris-clock.workspace = true
+reqwest.workspace = true
 state-file.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
+tracing.workspace = true
 tracing-subscriber.workspace = true
 use-cases.workspace = true
 

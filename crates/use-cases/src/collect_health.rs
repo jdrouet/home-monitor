@@ -1,5 +1,8 @@
 use chrono::NaiveDate;
-use domain::{SourceId, SourceKind};
+use domain::{
+    AttemptEnd, AttemptOutcome, ImportAttempt, ImportCounts, ImportFailure, SourceId, SourceKind,
+    Timestamp,
+};
 use tracing::{error, warn};
 
 use crate::{HealthDay, HealthProvider, Publisher};
@@ -11,13 +14,40 @@ pub enum HealthPull {
     /// and whose publish worked or had nothing to publish.
     Completed {
         fetched: Vec<NaiveDate>,
+        counts: ImportCounts,
     },
-    SessionFailed,
+    /// `counts` holds the days that passed before the failure.
+    SessionFailed { counts: ImportCounts },
     /// Garmin asked the client to slow down.
-    Throttled,
+    Throttled { counts: ImportCounts },
     /// The session could not open for a reason a login would not fix, such
-    /// as a network error or an outage.
-    Failed,
+    /// as a network error or an outage. No day was tried.
+    Failed(ImportFailure),
+}
+
+impl HealthPull {
+    /// The finished attempt that started at `started`.
+    pub fn attempt(&self, started: Timestamp, ended: Timestamp) -> ImportAttempt {
+        let (outcome, counts) = match self {
+            Self::Completed { counts, .. } => (AttemptOutcome::Done, *counts),
+            Self::SessionFailed { counts } => (
+                AttemptOutcome::Failed(ImportFailure::LoginRejected),
+                *counts,
+            ),
+            Self::Throttled { counts } => {
+                (AttemptOutcome::Failed(ImportFailure::Throttled), *counts)
+            }
+            Self::Failed(reason) => (AttemptOutcome::Failed(*reason), ImportCounts::default()),
+        };
+        ImportAttempt {
+            started,
+            ended: Some(AttemptEnd {
+                at: ended,
+                outcome,
+                counts,
+            }),
+        }
+    }
 }
 
 /// Pulls each of `days` through one session and publishes the measurements.
@@ -33,50 +63,61 @@ pub async fn collect_health<H: HealthProvider, P: Publisher>(
         Ok(session) => session,
         Err(error) if H::is_throttled(&error) => {
             warn!(%error, "health session throttled, skipping this pull");
-            return HealthPull::Throttled;
+            return HealthPull::Throttled {
+                counts: ImportCounts::default(),
+            };
         }
         Err(error) if H::is_session_error(&error) => {
             error!(%error, "health session failed, skipping this pull");
-            return HealthPull::SessionFailed;
+            return HealthPull::SessionFailed {
+                counts: ImportCounts::default(),
+            };
         }
         Err(error) => {
             error!(%error, "health session could not open, skipping this pull");
-            return HealthPull::Failed;
+            return HealthPull::Failed(H::failure(&error));
         }
     };
     let mut fetched = Vec::new();
+    let mut counts = ImportCounts::default();
     for day in days {
         let health = match provider.daily(&session, day.date).await {
             Ok(health) => health,
             Err(error) if H::is_session_error(&error) => {
                 error!(%error, "health session rejected, skipping this pull");
-                return HealthPull::SessionFailed;
+                return HealthPull::SessionFailed { counts };
             }
             Err(error) if H::is_throttled(&error) => {
                 warn!(%error, "health fetch throttled, ending this pull");
-                return HealthPull::Throttled;
+                return HealthPull::Throttled { counts };
             }
             Err(error) => {
                 warn!(%error, date = %day.date, "health fetch failed, skipping this day");
+                counts.failed += 1;
                 continue;
             }
         };
         let batch = health.measurements(source_id, day.stamp);
         if batch.is_empty() {
             fetched.push(day.date);
+            counts.empty += 1;
             continue;
         }
         match publisher
             .publish(SourceKind::Health, source_id, &batch)
             .await
         {
-            Ok(()) => fetched.push(day.date),
+            Ok(()) => {
+                fetched.push(day.date);
+                counts.stored += 1;
+            }
             Err(error) => {
                 warn!(%error, date = %day.date, "health publish failed, skipping this day");
+                counts.failed += 1;
             }
         }
     }
-    HealthPull::Completed { fetched }
+    HealthPull::Completed { fetched, counts }
 }
 
 #[cfg(test)]
@@ -87,8 +128,12 @@ mod tests {
     use std::sync::Mutex;
 
     use chrono::NaiveDate;
-    use domain::{Measurement, SourceId, SourceKind, Timestamp};
+    use domain::{
+        AttemptEnd, AttemptOutcome, ImportAttempt, ImportCounts, ImportFailure, Measurement,
+        SourceId, SourceKind, Timestamp,
+    };
 
+    use crate::test_archive::counts;
     use crate::{DailyHealth, HealthDay, HealthProvider, Publisher};
 
     use super::{HealthPull, collect_health};
@@ -120,9 +165,10 @@ mod tests {
         }
     }
 
-    fn completed(days: &[u32]) -> HealthPull {
+    fn completed(days: &[u32], counts: ImportCounts) -> HealthPull {
         HealthPull::Completed {
             fetched: days.iter().map(|day| date(*day)).collect(),
+            counts,
         }
     }
 
@@ -222,7 +268,7 @@ mod tests {
         };
         let publisher = TestPublisher::default();
         let outcome = run(&provider, &publisher, &[day(1), day(2)]).await;
-        assert_eq!(outcome, completed(&[1, 2]));
+        assert_eq!(outcome, completed(&[1, 2], counts(2, 0, 0)));
         assert_eq!(stamps(&publisher), [1, 2]);
         let published = publisher.published.lock().expect("lock");
         assert_eq!(published[0].0, SourceKind::Health);
@@ -232,9 +278,22 @@ mod tests {
     #[tokio::test]
     async fn an_open_failure_is_classified_and_fetches_and_publishes_nothing() {
         for (error, expected) in [
-            (TestError::Throttled, HealthPull::Throttled),
-            (TestError::Session, HealthPull::SessionFailed),
-            (TestError::Network, HealthPull::Failed),
+            (
+                TestError::Throttled,
+                HealthPull::Throttled {
+                    counts: ImportCounts::default(),
+                },
+            ),
+            (
+                TestError::Session,
+                HealthPull::SessionFailed {
+                    counts: ImportCounts::default(),
+                },
+            ),
+            (
+                TestError::Network,
+                HealthPull::Failed(ImportFailure::BadAnswer),
+            ),
         ] {
             let provider = TestProvider {
                 open_error: Some(error),
@@ -256,7 +315,7 @@ mod tests {
         };
         let publisher = TestPublisher::default();
         let outcome = run(&provider, &publisher, &[day(1), day(2)]).await;
-        assert_eq!(outcome, completed(&[2]));
+        assert_eq!(outcome, completed(&[2], counts(1, 0, 1)));
         assert_eq!(stamps(&publisher), [2]);
     }
 
@@ -268,9 +327,41 @@ mod tests {
         };
         let publisher = TestPublisher::default();
         let outcome = run(&provider, &publisher, &[day(1), day(2)]).await;
-        assert_eq!(outcome, HealthPull::SessionFailed);
+        assert_eq!(
+            outcome,
+            HealthPull::SessionFailed {
+                counts: ImportCounts::default()
+            }
+        );
         assert_eq!(*provider.fetched.lock().expect("lock"), [date(1)]);
         assert!(stamps(&publisher).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_stop_after_a_stored_day_keeps_its_count() {
+        for (error, expected) in [
+            (
+                TestError::Session,
+                HealthPull::SessionFailed {
+                    counts: counts(1, 0, 0),
+                },
+            ),
+            (
+                TestError::Throttled,
+                HealthPull::Throttled {
+                    counts: counts(1, 0, 0),
+                },
+            ),
+        ] {
+            let provider = TestProvider {
+                results: HashMap::from([(date(1), Ok(steps(5))), (date(2), Err(error))]),
+                ..TestProvider::default()
+            };
+            let publisher = TestPublisher::default();
+            let outcome = run(&provider, &publisher, &[day(1), day(2)]).await;
+            assert_eq!(outcome, expected);
+            assert_eq!(stamps(&publisher), [1]);
+        }
     }
 
     #[tokio::test]
@@ -284,7 +375,12 @@ mod tests {
         };
         let publisher = TestPublisher::default();
         let outcome = run(&provider, &publisher, &[day(1), day(2)]).await;
-        assert_eq!(outcome, HealthPull::Throttled);
+        assert_eq!(
+            outcome,
+            HealthPull::Throttled {
+                counts: ImportCounts::default()
+            }
+        );
         assert_eq!(*provider.fetched.lock().expect("lock"), [date(1)]);
         assert!(stamps(&publisher).is_empty());
     }
@@ -300,7 +396,7 @@ mod tests {
             ..TestPublisher::default()
         };
         let outcome = run(&provider, &publisher, &[day(1), day(2)]).await;
-        assert_eq!(outcome, completed(&[2]));
+        assert_eq!(outcome, completed(&[2], counts(1, 0, 1)));
         assert_eq!(stamps(&publisher), [2]);
     }
 
@@ -309,7 +405,51 @@ mod tests {
         let provider = TestProvider::default();
         let publisher = TestPublisher::default();
         let outcome = run(&provider, &publisher, &[day(1)]).await;
-        assert_eq!(outcome, completed(&[1]));
+        assert_eq!(outcome, completed(&[1], counts(0, 1, 0)));
         assert!(stamps(&publisher).is_empty());
+    }
+
+    #[test]
+    fn an_attempt_carries_the_outcome_and_the_counts() {
+        let (started, ended) = (Timestamp::from_micros(1), Timestamp::from_micros(2));
+        let table = [
+            (
+                completed(&[1], counts(1, 2, 3)),
+                AttemptOutcome::Done,
+                counts(1, 2, 3),
+            ),
+            (
+                HealthPull::SessionFailed {
+                    counts: counts(1, 0, 0),
+                },
+                AttemptOutcome::Failed(ImportFailure::LoginRejected),
+                counts(1, 0, 0),
+            ),
+            (
+                HealthPull::Throttled {
+                    counts: counts(0, 1, 0),
+                },
+                AttemptOutcome::Failed(ImportFailure::Throttled),
+                counts(0, 1, 0),
+            ),
+            (
+                HealthPull::Failed(ImportFailure::GarminDown),
+                AttemptOutcome::Failed(ImportFailure::GarminDown),
+                ImportCounts::default(),
+            ),
+        ];
+        for (pull, outcome, counts) in table {
+            assert_eq!(
+                pull.attempt(started, ended),
+                ImportAttempt {
+                    started,
+                    ended: Some(AttemptEnd {
+                        at: ended,
+                        outcome,
+                        counts,
+                    }),
+                }
+            );
+        }
     }
 }

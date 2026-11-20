@@ -2,6 +2,7 @@ use std::io;
 use std::time::Duration;
 
 use chrono::NaiveDate;
+use domain::ImportFailure;
 use reqwest::header::{ACCEPT, CACHE_CONTROL, HeaderMap, LOCATION};
 use reqwest::redirect::Policy;
 use reqwest::{Client, RequestBuilder, Response, StatusCode, Url};
@@ -250,6 +251,25 @@ impl HealthProvider for GarminConnect {
                 if matches!(status.as_u16(), 427 | 429)
         )
     }
+
+    fn failure(error: &GarminError) -> ImportFailure {
+        if Self::is_session_error(error) {
+            return ImportFailure::LoginRejected;
+        }
+        if Self::is_throttled(error) {
+            return ImportFailure::Throttled;
+        }
+        match error {
+            GarminError::Request(_) => ImportFailure::Unreachable,
+            GarminError::Status(status) | GarminError::Refresh(status)
+                if status.is_server_error() =>
+            {
+                ImportFailure::GarminDown
+            }
+            GarminError::TokenFile { .. } => ImportFailure::LoginFileUnreadable,
+            _ => ImportFailure::BadAnswer,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -259,6 +279,8 @@ pub(crate) mod tests {
     use std::time::Duration;
 
     use chrono::NaiveDate;
+    use domain::ImportFailure;
+    use reqwest::StatusCode;
     use tempfile::TempDir;
     use use_cases::HealthProvider;
 
@@ -636,6 +658,53 @@ pub(crate) mod tests {
         assert!(std::ptr::eq(new().pacer, new().pacer));
     }
 
+    #[test]
+    fn every_error_shape_maps_to_one_reason() {
+        let status = |code: u16| StatusCode::from_u16(code).expect("status");
+        let token_file = |kind| GarminError::TokenFile {
+            path: "garmin_tokens.json".into(),
+            source: io::Error::from(kind),
+        };
+        let table = [
+            (
+                GarminError::SessionRejected(status(401)),
+                ImportFailure::LoginRejected,
+            ),
+            (
+                GarminError::InvalidTokenFile {
+                    path: "garmin_tokens.json".into(),
+                },
+                ImportFailure::LoginRejected,
+            ),
+            (
+                GarminError::Refresh(status(403)),
+                ImportFailure::LoginRejected,
+            ),
+            (
+                token_file(io::ErrorKind::NotFound),
+                ImportFailure::LoginRejected,
+            ),
+            (GarminError::Status(status(429)), ImportFailure::Throttled),
+            (GarminError::Refresh(status(427)), ImportFailure::Throttled),
+            (GarminError::Status(status(503)), ImportFailure::GarminDown),
+            (GarminError::Refresh(status(500)), ImportFailure::GarminDown),
+            (GarminError::Status(status(404)), ImportFailure::BadAnswer),
+            (GarminError::Refresh(status(408)), ImportFailure::BadAnswer),
+            (GarminError::Malformed, ImportFailure::BadAnswer),
+            (
+                GarminError::InvalidResponse { endpoint: "sleep" },
+                ImportFailure::BadAnswer,
+            ),
+            (
+                token_file(io::ErrorKind::PermissionDenied),
+                ImportFailure::LoginFileUnreadable,
+            ),
+        ];
+        for (error, reason) in table {
+            assert_eq!(GarminConnect::failure(&error), reason, "{error}");
+        }
+    }
+
     #[tokio::test]
     async fn a_transport_error_carries_no_url() {
         let dir = TempDir::new().expect("tempdir");
@@ -644,6 +713,7 @@ pub(crate) mod tests {
         drop(server);
         let error = connect.open().await.expect_err("server is gone");
         assert!(matches!(error, GarminError::Request(_)));
+        assert_eq!(GarminConnect::failure(&error), ImportFailure::Unreachable);
         assert!(!format!("{error:?}").contains(&base));
     }
 }
