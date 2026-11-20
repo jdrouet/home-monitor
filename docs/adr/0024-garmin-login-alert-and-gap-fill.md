@@ -1,6 +1,6 @@
 # ADR-0024: Garmin login alert and gap fill
 
-Status: accepted (import chain extended by ADR-0025)
+Status: accepted (import chain extended by ADR-0025; throttled and failed pulls notified by ADR-0027)
 
 ## Context
 Issue #16. ADR-0008 says a refresh failure raises an alert; ADR-0022 reports a

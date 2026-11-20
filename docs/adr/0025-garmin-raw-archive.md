@@ -1,6 +1,6 @@
 # ADR-0025: Garmin raw archive and request pacing
 
-Status: accepted
+Status: accepted (stop reasons reported by ADR-0027)
 
 ## Context
 Issue #32 asks to keep, at home and in Garmin's original form, everything

@@ -11,18 +11,18 @@ overview, and gives each failure a rendered state instead of a bare
 ## Shared to all pages
 
 - Shell: the skip link, a sticky header with the nav, then `main`. Every page
-  links to the other three in one tap, and the current page is marked with
+  links to the other four in one tap, and the current page is marked with
   `aria-current="page"` plus a visual state (design-system.md, App shell).
 - Page side padding is `--space-4` on phone and `--space-5` on desktop. Main
   content is capped at `--page-max` and centred.
-- Focus order: skip link, Overview, History, Alerts, Health, then `main` in
+- Focus order: skip link, Overview, History, Alerts, Health, Imports, then `main` in
   DOM order. The visual order matches the DOM order on both layouts.
 - Store unavailable: the page renders the full shell, the page header, and a
   warning notice in the data region. The HTTP status stays 502, as today. A
   page that auto-refreshes keeps its refresh, so it recovers without the
   owner's action.
-- Auto refresh periods are unchanged: Overview 60 s, Alerts 60 s, Health
-  300 s, History none. An inline script reloads the page only while it is
+- Auto refresh periods are unchanged: Overview 60 s, Alerts 60 s, Imports
+  60 s, Health 300 s, History none. An inline script reloads the page only while it is
   visible and no form field has focus (ADR-0026). No page uses a
   `<meta http-equiv="refresh">`.
 
@@ -254,13 +254,58 @@ newest first, with the caption "Daily health, last 30 days".
 | No data on any day | A neutral notice in place of the table: "**No health data in the last 30 days.** Check that the health collector is running." |
 | Store unavailable | A warning notice: "**Health data unavailable.** The store did not respond. This page retries every 5 minutes." Status 502. |
 
+## Imports `/imports`
+
+Content order: page header "Imports" with "Updated HH:MM"; a visually hidden
+`h2` "Garmin jobs"; a `card-grid card-grid--jobs` with one `card` per job in
+run order: Daily pull, Missed days (last 30), One-year health import, Workout
+archive, Daily archive. Each card has an `h3` with the job name and the badge
+at its right, line 1 in `.job-status` (`--text-base`), then optional
+`.secondary` lines (`--text-sm`, `--text-muted`, tabular): progress, finish
+time, next try. The view shows only the latest attempt.
+
+- Phone: one column, cards about 110 to 170 px tall. Desktop: three columns at
+  `--page-max`, so five cards sit 3 + 2.
+- Times are `YYYY-MM-DD HH:MM` in Europe/Paris.
+- Report content is escaped, never marked safe.
+
+### States per job
+
+| State | Badge | Line 1 |
+|---|---|---|
+| Never run | `badge--neutral` "Not run yet" | "Not run since the health collector started." |
+| Running | `badge--neutral` "Running" | "Running since {started}." |
+| Done | `badge--neutral` "Up to date" | "Worked at {ended}: {counts}." |
+| Partial (done, some days failed) | `badge--neutral` "Partial" | "Worked at {ended}: {counts}." Never shown as "Up to date". |
+| Catching up (paused) | `badge--neutral` "Catching up" | "Paused at {ended}: {counts}." |
+| Failed | `badge--alert` "Failed" | "Failed at {ended}: {reason}" |
+
+Secondary lines, in this order, each only when it applies:
+- Progress. Days with left > 0: "Up to {done_through} · {left} days left".
+  Days with left 0: "Complete up to {done_through}". Workouts incomplete:
+  "Walking the workout history". Workouts complete: "Workout history complete".
+- Finish time: "Should finish around {time}", "Waits for {job name}" or
+  "Finish time unknown".
+- Next try, after a failure: "Tries again at {time} ({date})" while the job's
+  retry time is ahead, otherwise "Will try again at the next daily pull". A
+  job whose progress file is unreadable adds "Its progress file is unreadable
+  and needs attention; fix or delete it on the Pi."
+
+### Page states
+
+| State | What the owner sees | Status |
+|---|---|---|
+| Collector unreachable | A warning notice replaces the grid: "**Import status unavailable.** The health collector did not respond. This page retries every minute." | 502 |
+| Garmin not set up (no `[health_collector]`) | A neutral notice: "**Garmin is not set up.** Add a [health_collector] section to config.toml, then log in." | 200 |
+| Report | The grid | 200 |
+
 ## CSS delivery and templates
 
 One `app.css`, inlined by a shared `base.html`; see ADR-0026.
 
 ## Acceptance checks for review
 
-1. From each of the 4 pages, each other page is one nav activation away. The
+1. From each of the 5 pages, each other page is one nav activation away. The
    current page has `aria-current="page"`, the accent bar, and weight 600.
 2. At 390 × 844 with 6 rooms and up to 2 active alerts, the alerts and every
    room value are visible without scrolling.
@@ -272,7 +317,7 @@ One `app.css`, inlined by a shared `base.html`; see ADR-0026.
 5. With the OS in dark mode, every page, the native controls, and the
    History chart's axes and lines use the dark tokens, without a reload of
    the chart's colours by hand.
-6. Tab from page load: the first stop is "Skip to content", then the 4 nav
+6. Tab from page load: the first stop is "Skip to content", then the 5 nav
    links. Every focused element shows the 2 px accent ring.
 7. No state is shown by colour alone. Every badge has text, and every chart
    line has a legend label and differs from its neighbour by dash or hue.

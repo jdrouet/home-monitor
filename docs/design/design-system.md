@@ -132,15 +132,15 @@ The token values live in `crates/dashboard/assets/app.css`.
 - The DOM order is: skip link, `<header>` containing `<nav aria-label="Main">`,
   `<main id="main">`. The shell comes from one base template, so every page
   has the same shell.
-- The nav has four links, always in this order: Overview `/`, History
-  `/history`, Alerts `/alerts`, Health `/health`. Every page shows all four,
-  including the current page.
+- The nav has five links, always in this order: Overview `/`, History
+  `/history`, Alerts `/alerts`, Health `/health`, Imports `/imports`. Every
+  page shows all five, including the current page.
 - The header is `position: sticky; top: 0`, with `--surface` fill and a
   1 px `--border` bottom edge. The nav therefore stays one tap away on long
   pages, such as Health.
-- Phone: the bar is 48 px tall. The four links share the width equally
-  (`grid-template-columns: repeat(auto-fit, minmax(min(5.5rem, 100%), 1fr))`,
-  which wraps to two rows under large text settings). Links use `--text-sm`
+- Phone: the bar is 48 px tall. The five links share the width equally
+  (`grid-template-columns: repeat(auto-fit, minmax(min(4.5rem, 100%), 1fr))`,
+  which wraps to two rows under large text settings, and at 320 px). Links use `--text-sm`
   600 and are centred. No brand text is shown.
 - Desktop: "Home monitor" appears as plain text (`--text-base` 600, not a
   link) at the left, and the links follow inline, each at least 44 px tall
@@ -156,10 +156,10 @@ The token values live in `crates/dashboard/assets/app.css`.
 ### Page header
 
 - An `h1` (`--text-lg`) on the left. It always matches the nav label:
-  Overview, History, Alerts, Health.
+  Overview, History, Alerts, Health, Imports.
 - Optional meta on the same row, right-aligned, in `--text-sm` and
   `--text-muted`: "Updated 13:42", the render time in Europe/Paris. Overview
-  and Alerts show it because they auto-refresh.
+  Alerts and Imports show it because they auto-refresh.
 - `<title>` is "<Page> · Home monitor".
 
 ### Card
@@ -170,7 +170,8 @@ The token values live in `crates/dashboard/assets/app.css`.
   grid-template-columns: repeat(auto-fill, minmax(min(10rem, 100%), 1fr))`.
   At or above 48rem the minimum is `12rem`. A card can take the modifier
   `card--wide` (`grid-column: span 2`, or `1 / -1` when the grid has fewer
-  than 3 columns).
+  than 3 columns). The grid can take the modifier `card-grid--jobs`, whose
+  minimum is `minmax(min(20rem, 100%), 1fr)` on both sides of the breakpoint.
 - The card title is an `h3` in `--text-sm` 600 `--text`, with a badge at its
   right when one applies.
 - Use a card for one subject's current state (a room, outside, an unknown
@@ -196,7 +197,7 @@ the meaning, and the dashboard has no icon-only status.
 
 | Variant | Colours | Text | Where |
 |---|---|---|---|
-| `badge--alert` | `--alert` on `--alert-bg` | Too hot · Too cold · Offline · Login expired | active alerts |
+| `badge--alert` | `--alert` on `--alert-bg` | Too hot · Too cold · Offline · Login expired · Failed | active alerts and Garmin jobs that gave up |
 | `badge--warn` | `--warn` on `--warn-bg` | Not reporting | room, outside, and sensor cards whose `Freshness` is `NotReporting` |
 | `badge--neutral` | `--text-muted` on `--sunken` | Too hot · Too cold · Offline · Login expired | resolved alerts |
 
@@ -297,8 +298,8 @@ padding and a minimum height of `--tap`.
    nav item, the checked segment, and the one primary button.
 3. Status is words first. Every coloured state has text, and a badge without
    text is not allowed.
-4. Use `--alert` only for active alerts, and `--warn` only for
-   "not reporting" and "unavailable".
+4. Use `--alert` only for active alerts and failed Garmin jobs, and `--warn`
+   only for "not reporting" and "unavailable".
 5. "Unavailable" (the dependency failed) and "empty" (no data) are different
    states and always use different copy.
 6. A new overview card joins `card-grid` as a `card` and does not add a new
