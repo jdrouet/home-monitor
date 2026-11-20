@@ -141,7 +141,7 @@ The token values live in `crates/dashboard/assets/app.css`.
 - Phone: the bar is 48 px tall. The five links share the width equally
   (`grid-template-columns: repeat(5, minmax(0, 1fr))`, so the nav stays one
   row down to 320 px). Links use `--text-sm` 600 and are centred; below 360 px
-  the font steps down to 0.8125rem so "Overview" fits in a 64 px column. No brand text is shown.
+  the font steps down to 0.75rem so "Overview" fits in a 64 px column. No brand text is shown.
 - Desktop: "Home monitor" appears as plain text (`--text-base` 600, not a
   link) at the left, and the links follow inline, each at least 44 px tall
   with `--space-4` inline padding. The bar content is capped at `--page-max`.

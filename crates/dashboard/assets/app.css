@@ -320,7 +320,7 @@ main > section + section { margin-top: var(--space-5); }
 .chart-card .u-legend { color: var(--text); font-size: var(--text-sm); }
 
 @media (max-width: 22.5rem) {
-  .app-header a { font-size: 0.8125rem; }
+  .app-header a { font-size: 0.75rem; }
 }
 
 @media (min-width: 48rem) {
