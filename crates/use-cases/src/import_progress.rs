@@ -66,7 +66,7 @@ impl<S: BackfillStore, C: ActivityCursorStore> ImportCursors<'_, S, C> {
             };
             let eta = jobs
                 .next_pull
-                .and_then(|next| estimate(&jobs, job, &loaded.work(job), day, now, next));
+                .and_then(|next| estimate(&jobs, &loaded, job, day, now, next));
             let entry = jobs.jobs.entry(job).or_default();
             entry.progress = loaded.progress(job);
             entry.eta = eta;
@@ -121,30 +121,45 @@ fn left(cursor: BackfillCursor) -> u32 {
     u32::try_from((cursor.last - cursor.next).num_days() + 1).unwrap_or(u32::MAX)
 }
 
-/// The job running now gets a time or a count of further windows; a job that
-/// an earlier one provably holds up waits for it; anything else is unknown.
+/// The job running now, or the one that resumes first after a pause, gets a
+/// time or a count of further windows; a job that an earlier one provably
+/// holds up waits for it; anything else is unknown.
 fn estimate(
     jobs: &ImportStatus,
+    loaded: &Loaded,
     job: ImportJob,
-    work: &Work,
     day: Duration,
     now: Timestamp,
     next: Timestamp,
 ) -> Option<ImportEta> {
+    let work = loaded.work(job);
     if matches!(work, Work::Nothing) {
         return None;
     }
-    if !is_running(jobs, job) {
-        return Some(
-            blocker(jobs, job, next).map_or(ImportEta::Unknown, |job| ImportEta::WaitsFor { job }),
-        );
+    let ended = latest(jobs, job).map(|attempt| attempt.ended);
+    let running = ended == Some(None);
+    let paused = ended
+        .flatten()
+        .is_some_and(|end| end.outcome == AttemptOutcome::Paused);
+    if !running {
+        if let Some(blocking) = blocker(jobs, loaded, job, next) {
+            return Some(ImportEta::WaitsFor { job: blocking });
+        }
+        if !paused {
+            return Some(ImportEta::Unknown);
+        }
     }
     let Work::Days(left) = work else {
         return Some(ImportEta::Unknown);
     };
-    let cost = day * *left;
-    let finish = shifted(now, cost, true);
-    Some(if finish <= shifted(next, MARGIN, false) {
+    let cost = day * left;
+    let (start, cutoff) = if running {
+        (now, shifted(next, MARGIN, false))
+    } else {
+        (next, shifted(next, WINDOW, true))
+    };
+    let finish = shifted(start, cost, true);
+    Some(if finish <= cutoff {
         ImportEta::At { at: finish }
     } else {
         let windows = cost.as_secs().div_ceil(WINDOW.as_secs());
@@ -154,26 +169,32 @@ fn estimate(
     })
 }
 
-fn is_running(jobs: &ImportStatus, job: ImportJob) -> bool {
-    latest(jobs, job).is_some_and(|attempt| attempt.ended.is_none())
-}
-
-/// The earlier job, in the current window, that is running or stopped, so the
-/// chain cannot have reached `job`. A skipped job does not stop the chain.
-fn blocker(jobs: &ImportStatus, job: ImportJob, next: Timestamp) -> Option<ImportJob> {
+/// The earlier job, in the current window, that is running, stopped or paused
+/// with work left, so the chain cannot have reached `job` first. A skipped job
+/// does not stop the chain.
+fn blocker(
+    jobs: &ImportStatus,
+    loaded: &Loaded,
+    job: ImportJob,
+    next: Timestamp,
+) -> Option<ImportJob> {
     let since = shifted(next, DAY, false);
     ImportJob::ALL
         .into_iter()
         .take_while(|earlier| *earlier != job)
         .find(|earlier| {
+            let work_left =
+                *earlier != ImportJob::DailyPull && !matches!(loaded.work(*earlier), Work::Nothing);
             latest(jobs, *earlier)
-                .is_some_and(|attempt| attempt.started >= since && holds_up(attempt))
+                .is_some_and(|attempt| attempt.started >= since && holds_up(attempt, work_left))
         })
 }
 
-fn holds_up(attempt: &ImportAttempt) -> bool {
-    attempt.ended.is_none_or(|end| {
-        matches!(end.outcome, AttemptOutcome::Failed(reason) if reason != ImportFailure::ProgressUnreadable)
+fn holds_up(attempt: &ImportAttempt, work_left: bool) -> bool {
+    attempt.ended.is_none_or(|end| match end.outcome {
+        AttemptOutcome::Failed(reason) => reason != ImportFailure::ProgressUnreadable,
+        AttemptOutcome::Paused => work_left,
+        AttemptOutcome::Done => false,
     })
 }
 
@@ -433,18 +454,83 @@ mod tests {
             ..Stores::quiet()
         };
         let skipped = ended(0, AttemptOutcome::Failed(ImportFailure::ProgressUnreadable));
-        let paused = ended(0, AttemptOutcome::Paused);
         let old = ended(
             -2 * 86_400,
             AttemptOutcome::Failed(ImportFailure::Throttled),
         );
-        for earlier in [skipped, paused, old] {
+        for earlier in [skipped, old] {
             let status = stores.status(jobs_with(&[(ImportJob::HealthHistory, earlier)]));
             assert_eq!(
                 eta(&status, ImportJob::DailyArchive),
                 Some(ImportEta::Unknown)
             );
         }
+    }
+
+    fn paused(started: i64) -> ImportAttempt {
+        ended(started, AttemptOutcome::Paused)
+    }
+
+    #[test]
+    fn a_paused_job_with_work_left_is_estimated_from_the_next_pull() {
+        let stores = Stores {
+            yearly: MemoryBackfill::holding(pending(245)),
+            ..Stores::quiet()
+        };
+        let status = stores.status(jobs_with(&[(ImportJob::HealthHistory, paused(0))]));
+        assert_eq!(
+            eta(&status, ImportJob::HealthHistory),
+            Some(ImportEta::At {
+                at: at(86_400 + 245 * 62)
+            })
+        );
+        let stores = Stores {
+            yearly: MemoryBackfill::holding(pending(1500)),
+            ..Stores::quiet()
+        };
+        let status = stores.status(jobs_with(&[(ImportJob::HealthHistory, paused(0))]));
+        assert_eq!(
+            eta(&status, ImportJob::HealthHistory),
+            Some(ImportEta::ImportDays { days: 2 })
+        );
+    }
+
+    #[test]
+    fn a_job_behind_a_paused_one_waits_for_it() {
+        let stores = Stores {
+            yearly: MemoryBackfill::holding(pending(5)),
+            archive: MemoryBackfill::holding(pending(5)),
+            ..Stores::quiet()
+        };
+        let status = stores.status(jobs_with(&[
+            (ImportJob::HealthHistory, paused(0)),
+            (ImportJob::DailyArchive, paused(10)),
+        ]));
+        assert_eq!(
+            eta(&status, ImportJob::DailyArchive),
+            Some(ImportEta::WaitsFor {
+                job: ImportJob::HealthHistory
+            })
+        );
+    }
+
+    #[test]
+    fn a_paused_job_with_no_work_left_holds_nothing_up() {
+        let stores = Stores {
+            archive: MemoryBackfill::holding(pending(5)),
+            ..Stores::quiet()
+        };
+        let status = stores.status(jobs_with(&[
+            (ImportJob::HealthHistory, paused(0)),
+            (ImportJob::DailyArchive, paused(10)),
+        ]));
+        assert_eq!(eta(&status, ImportJob::HealthHistory), None);
+        assert_eq!(
+            eta(&status, ImportJob::DailyArchive),
+            Some(ImportEta::At {
+                at: at(86_400 + 5 * 69)
+            })
+        );
     }
 
     #[test]

@@ -56,9 +56,11 @@ define the jobs and the chain that runs after each daily pull.
   gets an estimate "at" a time when its remaining work ends within the window
   cutoff (the next pull minus the 5 min margin). Otherwise it gets a count of
   further import days: remaining time divided by a window of 24 h minus the
-  5 min margin, rounded up. "Waits for" is given
-  only when the recorded chain state proves the dependency: an earlier job is
-  running or stopped in the current window. Every other case is unknown,
+  5 min margin, rounded up. A paused job with work left is the one that resumes
+  first, so it is estimated the same way, counting from the next pull. "Waits
+  for" is given only when the recorded chain state proves the dependency: an
+  earlier job is running, stopped, or paused with work left in the current
+  window. Every other case is unknown,
   including a missing or unreadable cursor, workout history, a finished activity
   history with catch-up pending, and a page cap hit. Garmin gives no workout
   total, and no request is added to learn it.
