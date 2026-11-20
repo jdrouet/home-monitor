@@ -11,8 +11,11 @@ define the jobs and the chain that runs after each daily pull.
 - Five jobs are reported: daily pull, missed days, one-year health import,
   workout archive and daily archive. Each keeps its latest attempt (first try,
   then retries from #44 later, oldest first), a `retry_at` and progress read
-  from its cursor. An attempt ends done, paused or failed with one of ten
-  reasons, each mapped from its source errors. Every ended attempt carries
+  from its cursor. An attempt ends done, paused (deadline), capped (the
+  workout page limit; the next job still runs) or failed with one of ten
+  reasons, each mapped from its source errors. The report enums have no
+  unknown-variant fallback: a new outcome or reason needs every reader updated
+  first. Every ended attempt carries
   counts of stored, empty and failed days (or workouts). A stop after some
   successful days keeps their count, and a done attempt with failed days is
   shown as partial, never as up to date.
