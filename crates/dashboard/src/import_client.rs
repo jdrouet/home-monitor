@@ -41,12 +41,10 @@ impl ImportClient {
             .send()
             .await
             .map_err(transport)?;
-        let body = response
-            .error_for_status()
-            .map_err(|_| ImportClientError::BadResponse)?
-            .bytes()
-            .await
-            .map_err(transport)?;
+        if !response.status().is_success() {
+            return Err(ImportClientError::BadResponse);
+        }
+        let body = response.bytes().await.map_err(transport)?;
         import_report::decode(&body).map_err(|_| ImportClientError::BadResponse)
     }
 }
@@ -56,5 +54,34 @@ fn transport(error: reqwest::Error) -> ImportClientError {
         ImportClientError::Timeout
     } else {
         ImportClientError::Unreachable
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::Router;
+    use axum::http::StatusCode;
+    use axum::routing::get;
+    use domain::{ImportStatus, import_report};
+    use reqwest::Url;
+    use tokio::net::TcpListener;
+
+    use super::{ImportClient, ImportClientError};
+
+    #[tokio::test]
+    async fn a_non_success_status_is_a_bad_response_even_with_a_valid_report() {
+        let body = import_report::encode(&ImportStatus::default());
+        let handler = get(move || async move { (StatusCode::MULTIPLE_CHOICES, body) });
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("binds");
+        let port = listener.local_addr().expect("address").port();
+        let router = Router::new().route("/imports", handler);
+        tokio::spawn(async move {
+            axum::serve(listener, router).await.expect("serves");
+        });
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/imports")).expect("valid url");
+        assert_eq!(
+            ImportClient::new(url).status().await,
+            Err(ImportClientError::BadResponse)
+        );
     }
 }

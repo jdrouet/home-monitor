@@ -39,12 +39,10 @@ impl ImportClient {
             .send()
             .await
             .map_err(transport)?;
-        let body = response
-            .error_for_status()
-            .map_err(|_| ImportPollError::BadResponse)?
-            .bytes()
-            .await
-            .map_err(transport)?;
+        if !response.status().is_success() {
+            return Err(ImportPollError::BadResponse);
+        }
+        let body = response.bytes().await.map_err(transport)?;
         import_report::decode(&body).map_err(|_| ImportPollError::BadResponse)
     }
 }
@@ -116,6 +114,17 @@ mod tests {
         assert_eq!(
             client(url).status().await,
             Err(ImportPollError::Unreachable)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_non_success_status_is_a_bad_response_even_with_a_valid_report() {
+        let body = import_report::encode(&ImportStatus::default());
+        let handler = get(move || async move { (StatusCode::MULTIPLE_CHOICES, body) });
+        let url = serve(Router::new().route("/imports", handler)).await;
+        assert_eq!(
+            client(url).status().await,
+            Err(ImportPollError::BadResponse)
         );
     }
 

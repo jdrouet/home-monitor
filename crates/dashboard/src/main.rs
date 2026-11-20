@@ -141,11 +141,12 @@ async fn health(State(state): State<Arc<AppState>>) -> Response {
 }
 
 async fn imports(State(state): State<Arc<AppState>>) -> Response {
-    let now = Timestamp::now();
     let Some(client) = &state.imports else {
-        return imports_page::render(Imports::NotSetUp, now);
+        return imports_page::render(Imports::NotSetUp, Timestamp::now());
     };
-    match client.status().await {
+    let status = client.status().await;
+    let now = Timestamp::now();
+    match status {
         Ok(status) => {
             let summary = build_import_summary(&status);
             imports_page::render(Imports::Report(&summary), now)
