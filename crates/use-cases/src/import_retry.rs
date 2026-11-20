@@ -53,7 +53,7 @@ mod tests {
 
     use crate::import_window::{MARGIN, STEP_SPACING};
 
-    use super::{RETRY_DELAYS, is_transient, next_retry};
+    use super::{is_transient, next_retry};
 
     const ALL: [(ImportFailure, bool); 10] = [
         (ImportFailure::Unreachable, true),
@@ -83,22 +83,21 @@ mod tests {
     fn next_retry_follows_the_delays_then_gives_up() {
         let ended = Timestamp::from_micros(1_000);
         let until = Timestamp::from_micros(1_000 + micros(Duration::from_secs(86_400)));
-        for (retries, delay) in RETRY_DELAYS.iter().enumerate() {
+        for (retries, minutes) in [5, 15, 60].into_iter().enumerate() {
             assert_eq!(
                 next_retry(ImportFailure::BadAnswer, retries, ended, until),
-                Some(Timestamp::from_micros(1_000 + micros(*delay)))
+                Some(Timestamp::from_micros(
+                    1_000 + micros(Duration::from_secs(minutes * 60))
+                ))
             );
         }
-        assert_eq!(
-            next_retry(ImportFailure::BadAnswer, RETRY_DELAYS.len(), ended, until),
-            None
-        );
+        assert_eq!(next_retry(ImportFailure::BadAnswer, 3, ended, until), None);
     }
 
     #[test]
     fn a_retry_must_fit_a_step_before_the_deadline() {
         let ended = Timestamp::from_micros(0);
-        let needed = micros(RETRY_DELAYS[0]) + micros(STEP_SPACING + MARGIN);
+        let needed = micros(Duration::from_secs(5 * 60)) + micros(STEP_SPACING + MARGIN);
         let fits = Timestamp::from_micros(needed);
         let short = Timestamp::from_micros(needed - 1);
         assert!(next_retry(ImportFailure::GarminDown, 0, ended, fits).is_some());

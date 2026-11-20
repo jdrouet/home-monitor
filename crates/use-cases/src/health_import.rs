@@ -32,9 +32,11 @@ pub struct PullWindow<C, D> {
 impl<H: ArchiveSource, P: Publisher, A: RawArchive, S: BackfillStore, C: ActivityCursorStore>
     HealthImport<'_, H, P, A, S, C>
 {
-    /// Does nothing unless `pull` completed. A run that Garmin did not answer
-    /// is retried alone after 5, 15 and 60 minutes; any other stop ends the
-    /// chain. Each run reports its start, its end and its planned retry.
+    /// Does nothing unless `pull` completed. A run that stopped because Garmin
+    /// did not answer, had a server error or sent an unusable answer is retried
+    /// alone after 5, 15 and 60 minutes; any other stop ends the chain. An
+    /// unreadable cursor skips only its own job. Each run reports its start, its
+    /// end and its planned retry.
     pub async fn after_pull(
         &self,
         pull: &HealthPull,
@@ -157,7 +159,7 @@ async fn tracked(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::io;
     use std::sync::Mutex;
     use std::time::Duration;
@@ -169,15 +171,13 @@ mod tests {
     };
     use tokio::time::Instant;
 
-    use crate::import_retry::RETRY_DELAYS;
-    use crate::import_window::STEP_SPACING;
     use crate::test_archive::{
         MemoryArchive, MemoryBackfill, MemoryCursor, START, ScriptedSource, TestError, after, clock,
     };
     use crate::{
-        ActivityCursor, ActivityId, ActivityImport, ActivityRef, ArchiveDays, BackfillCursor,
-        DailyHealth, Fetched, HealthBackfill, HealthDay, HealthImport, HealthPull, Publisher,
-        PullWindow,
+        ActivityCursor, ActivityId, ActivityImport, ActivityRef, ArchiveDays, ArchiveKey,
+        BackfillCursor, DailyHealth, Fetched, HealthBackfill, HealthDay, HealthImport, HealthPull,
+        Publisher, PullWindow,
     };
 
     const DAY: Duration = Duration::from_secs(86_400);
@@ -367,6 +367,31 @@ mod tests {
         })
     }
 
+    fn day_keys() -> HashSet<String> {
+        let first = today() - Days::new(365);
+        (0..365)
+            .flat_map(|offset| {
+                let date = first + Days::new(offset);
+                ["a.json", "b.json"].map(|file| format!("{:?}", ArchiveKey::Day { date, file }))
+            })
+            .collect()
+    }
+
+    fn activity_keys(ids: impl Iterator<Item = (u64, &'static str)>) -> HashSet<String> {
+        ids.map(|(id, file)| {
+            let activity = ActivityRef {
+                id: ActivityId(id),
+                date: yesterday(),
+            };
+            format!("{:?}", ArchiveKey::Activity { activity, file })
+        })
+        .collect()
+    }
+
+    fn written(archive: &MemoryArchive) -> HashSet<String> {
+        archive.writes().keys().cloned().collect()
+    }
+
     fn activities(count: u64) -> Mutex<Vec<ActivityRef>> {
         Mutex::new(
             (1..=count)
@@ -543,8 +568,8 @@ mod tests {
             starts(&records, ImportJob::Workouts),
         );
         assert_eq!((ends.len(), starts.len()), (4, 4));
-        for (k, delay) in RETRY_DELAYS.iter().enumerate() {
-            let retry = plus(ends[k].0.at, *delay);
+        for (k, minutes) in [5, 15, 60].into_iter().enumerate() {
+            let retry = plus(ends[k].0.at, Duration::from_secs(minutes * 60));
             assert_eq!(ends[k].1, Some(retry));
             assert_eq!(starts[k + 1], retry);
         }
@@ -579,8 +604,8 @@ mod tests {
             assert_eq!(end_of(&records, *job).0, AttemptOutcome::Done);
         }
         let opened = source.opened_at();
-        assert_eq!(opened[1] - opened[0], RETRY_DELAYS[0] + STEP_SPACING);
-        assert_eq!(opened[2] - opened[1], RETRY_DELAYS[1] + STEP_SPACING);
+        assert_eq!(opened[1] - opened[0], Duration::from_secs(6 * 60));
+        assert_eq!(opened[2] - opened[1], Duration::from_secs(16 * 60));
     }
 
     #[tokio::test(start_paused = true)]
@@ -633,7 +658,7 @@ mod tests {
         let start = Instant::now();
         let late = move || {
             let elapsed = start.elapsed();
-            let skew = if elapsed >= RETRY_DELAYS[0] + STEP_SPACING {
+            let skew = if elapsed >= Duration::from_secs(6 * 60) {
                 Duration::from_secs(15 * 60)
             } else {
                 Duration::ZERO
@@ -714,8 +739,8 @@ mod tests {
         }
         let writes = archive.writes();
         assert_eq!(archive.count(), 365 * 2);
-        assert_eq!(writes.len(), 365 * 2);
         assert!(writes.values().all(|times| *times == 1));
+        assert_eq!(written(&archive), day_keys());
         assert!(stores.archive.stored().expect("archive cursor").is_done());
     }
 
@@ -738,10 +763,9 @@ mod tests {
         assert_eq!(ends.len(), 2);
         assert_eq!(ends[0].0.outcome, failed(ImportFailure::BadAnswer));
         assert_eq!(ends[1].0.outcome, AttemptOutcome::Done);
-        let activity_keys = 10 * 2;
-        let writes = archive.writes();
-        assert_eq!(writes.len(), activity_keys + 365 * 2);
-        assert!(writes.values().all(|times| *times == 1));
+        assert!(archive.writes().values().all(|times| *times == 1));
+        let expected = activity_keys((1..=10).flat_map(|id| [(id, "x.json"), (id, "y.json")]));
+        assert_eq!(written(&archive), &expected | &day_keys());
         let saved = stores.activities.saves();
         assert!(saved.iter().any(|cursor| cursor.start == 5 && !cursor.done));
         assert!(stores.activities.stored().expect("activity cursor").done);
@@ -775,6 +799,89 @@ mod tests {
             end_of(&records, ImportJob::DailyArchive).0,
             AttemptOutcome::Done
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_workout_failure_inside_a_page_leaves_the_checkpoint_of_the_completed_page() {
+        let source = ScriptedSource {
+            list: activities(10),
+            ..ScriptedSource::default()
+        };
+        let ok = || Ok(Fetched::Body(b"x".to_vec()));
+        source.script((0..13).map(|_| ok()).chain([Err(TestError::Session)]));
+        let archive = MemoryArchive::default();
+        let stores = Stores {
+            gap: done_gap(),
+            yearly: done_yearly(),
+            ..Stores::default()
+        };
+        let records = after_pull(&source, &archive, &stores, completed()).await;
+        assert_eq!(ends(&records, ImportJob::Workouts).len(), 1);
+        let cursor = stores.activities.stored().expect("activity cursor");
+        assert_eq!((cursor.start, cursor.done), (5, false));
+        let expected = activity_keys(
+            (1..=6)
+                .flat_map(|id| [(id, "x.json"), (id, "y.json")])
+                .chain([(7, "x.json")])
+                .take(13),
+        );
+        assert_eq!(written(&archive), expected);
+        assert!(archive.writes().values().all(|times| *times == 1));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_retry_gets_ten_catch_up_pages_of_its_own() {
+        let source = ScriptedSource {
+            list: activities(60),
+            ..ScriptedSource::default()
+        };
+        let ok = || Ok(Fetched::Body(b"x".to_vec()));
+        source.script((0..10).map(|_| ok()).chain([Err(TestError::Other)]));
+        let archive = MemoryArchive::default();
+        let stores = Stores {
+            gap: done_gap(),
+            yearly: done_yearly(),
+            activities: done_activities(),
+            ..Stores::default()
+        };
+        let records = after_pull(&source, &archive, &stores, completed()).await;
+        let ends = ends(&records, ImportJob::Workouts);
+        assert_eq!(ends.len(), 2);
+        assert_eq!(ends[0].0.outcome, failed(ImportFailure::BadAnswer));
+        assert!(ends[0].1.is_some());
+        assert_eq!(ends[1].0.outcome, AttemptOutcome::Capped);
+        assert_eq!(ends[1].1, None);
+        let page_reads = source
+            .pages()
+            .iter()
+            .filter(|(_, limit)| *limit == 5)
+            .count();
+        assert_eq!(page_reads, 2 + 10);
+        assert_eq!(
+            end_of(&records, ImportJob::DailyArchive).0,
+            AttemptOutcome::Done
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_later_job_keeps_its_full_budget_after_an_earlier_one_used_retries() {
+        let source = ScriptedSource {
+            list_fails: true,
+            ..ScriptedSource::default()
+        };
+        source.script_opens([Err(TestError::Other), Err(TestError::Other)]);
+        let (archive, stores) = (MemoryArchive::default(), Stores::default());
+        let records = after_pull(&source, &archive, &stores, completed()).await;
+        let gap = ends(&records, ImportJob::MissedDays);
+        assert_eq!(gap.len(), 3);
+        assert_eq!(gap[2].0.outcome, AttemptOutcome::Done);
+        let workouts = ends(&records, ImportJob::Workouts);
+        assert_eq!(workouts.len(), 4);
+        for (k, minutes) in [5, 15, 60].into_iter().enumerate() {
+            let retry = plus(workouts[k].0.at, Duration::from_secs(minutes * 60));
+            assert_eq!(workouts[k].1, Some(retry));
+        }
+        assert_eq!(workouts[3].1, None);
     }
 
     /// Runs `job` with a failing session reopen and returns the days Garmin
