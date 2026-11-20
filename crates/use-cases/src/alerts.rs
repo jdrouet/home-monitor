@@ -242,10 +242,10 @@ impl Alerts {
         local_time: impl Fn(Timestamp) -> String,
     ) {
         for (job, job_status) in &status.jobs {
-            let Some((failure, retry_at)) = give_up(*job, job_status) else {
+            let Some((failure, retry_at, retries)) = give_up(*job, job_status) else {
                 continue;
             };
-            let notification = import_notification(*job, failure, &local_time(retry_at));
+            let notification = import_notification(*job, failure, retries, &local_time(retry_at));
             if !self.import_due(*job, retry_at, now()) {
                 continue;
             }
@@ -379,9 +379,9 @@ impl Alerts {
     }
 }
 
-/// The reason and the pull a job waits for, when its latest attempt ended in a
-/// failure the owner has to hear about.
-fn give_up(job: ImportJob, status: &ImportJobStatus) -> Option<(ImportFailure, Timestamp)> {
+/// The reason, the pull a job waits for and the retries that failed, when its
+/// latest attempt ended in a failure the owner has to hear about.
+fn give_up(job: ImportJob, status: &ImportJobStatus) -> Option<(ImportFailure, Timestamp, usize)> {
     let end = status.attempts.last()?.ended?;
     let AttemptOutcome::Failed(failure) = end.outcome else {
         return None;
@@ -389,7 +389,11 @@ fn give_up(job: ImportJob, status: &ImportJobStatus) -> Option<(ImportFailure, T
     if (job, failure) == (ImportJob::DailyPull, ImportFailure::LoginRejected) {
         return None;
     }
-    Some((failure, status.retry_at?))
+    Some((
+        failure,
+        status.retry_at?,
+        status.attempts.len().saturating_sub(1),
+    ))
 }
 
 #[cfg(test)]
@@ -1481,6 +1485,110 @@ mod tests {
             FakeStore::holding(store.saved.borrow().last().expect("saved").clone());
         let restarted = alerts(&restarted_store, HOUR);
         report(&restarted, &status, &notifier, &restarted_store, HOUR).await;
+        assert_eq!(notifier.sent.borrow().len(), 1);
+    }
+
+    fn record_try(
+        status: &mut ImportStatus,
+        started: i64,
+        outcome: Option<AttemptOutcome>,
+        retry: Option<i64>,
+    ) {
+        let attempt = ImportAttempt {
+            started: at(started),
+            ended: outcome.map(|outcome| AttemptEnd {
+                at: at(started + 1),
+                outcome,
+                counts: ImportCounts::default(),
+            }),
+        };
+        status.record(ImportJob::Workouts, attempt, at(10 * HOUR), retry.map(at));
+    }
+
+    fn down() -> AttemptOutcome {
+        AttemptOutcome::Failed(ImportFailure::GarminDown)
+    }
+
+    /// Records the three retries of a failing job one step at a time and
+    /// reports after each step; the last one gives up.
+    async fn retry_until_give_up(
+        alerts: &Alerts,
+        status: &mut ImportStatus,
+        notifier: &FakeNotifier<impl Fn()>,
+        store: &FakeStore,
+    ) -> usize {
+        let starts = [0, 5 * MINUTE, 20 * MINUTE, 80 * MINUTE];
+        let mut before_the_end = 0;
+        for (k, start) in starts.into_iter().enumerate() {
+            record_try(status, start, None, None);
+            report(alerts, status, notifier, store, start).await;
+            let retry = starts.get(k + 1).copied();
+            record_try(status, start, Some(down()), retry);
+            if retry.is_some() {
+                report(alerts, status, notifier, store, start + MINUTE).await;
+                before_the_end = notifier.sent.borrow().len();
+            }
+        }
+        before_the_end
+    }
+
+    #[tokio::test]
+    async fn a_job_that_retries_then_gives_up_notifies_once_after_the_last_retry() {
+        let (notifier, store) = (FakeNotifier::new(), FakeStore::new());
+        let alerts = alerts(&store, 0);
+        let mut status = ImportStatus::default();
+        let before_the_end = retry_until_give_up(&alerts, &mut status, &notifier, &store).await;
+        assert_eq!(before_the_end, 0);
+        assert!(notifier.sent.borrow().is_empty());
+        report(&alerts, &status, &notifier, &store, 81 * MINUTE).await;
+        assert_eq!(notifier.sent.borrow().len(), 1);
+        for poll in [82, 83] {
+            report(&alerts, &status, &notifier, &store, poll * MINUTE).await;
+        }
+        assert_eq!(notifier.sent.borrow().len(), 1);
+        assert!(notifier.messages()[0].contains("It retried 3 times."));
+    }
+
+    #[tokio::test]
+    async fn a_retry_that_works_sends_nothing() {
+        let (notifier, store) = (FakeNotifier::new(), FakeStore::new());
+        let alerts = alerts(&store, 0);
+        let mut status = ImportStatus::default();
+        record_try(&mut status, 0, Some(down()), Some(5 * MINUTE));
+        report(&alerts, &status, &notifier, &store, MINUTE).await;
+        record_try(&mut status, 5 * MINUTE, None, None);
+        record_try(&mut status, 5 * MINUTE, Some(AttemptOutcome::Done), None);
+        report(&alerts, &status, &notifier, &store, 7 * MINUTE).await;
+        assert!(notifier.sent.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_restart_during_the_backoff_then_the_give_up_notifies_once() {
+        let (notifier, store) = (FakeNotifier::new(), FakeStore::new());
+        let first = alerts(&store, 0);
+        let mut status = ImportStatus::default();
+        record_try(&mut status, 0, Some(down()), Some(5 * MINUTE));
+        report(&first, &status, &notifier, &store, MINUTE).await;
+        let restarted = alerts(&store, 2 * MINUTE);
+        record_try(&mut status, 5 * MINUTE, None, None);
+        record_try(&mut status, 5 * MINUTE, Some(down()), None);
+        report(&restarted, &status, &notifier, &store, 7 * MINUTE).await;
+        report(&restarted, &status, &notifier, &store, 8 * MINUTE).await;
+        assert_eq!(notifier.sent.borrow().len(), 1);
+        assert!(notifier.messages()[0].contains("It retried once."));
+    }
+
+    #[tokio::test]
+    async fn an_old_collector_alert_then_a_new_collector_give_up_in_the_window_notifies_once() {
+        let (notifier, store) = (FakeNotifier::new(), FakeStore::new());
+        let alerts = alerts(&store, 0);
+        let mut old = ImportStatus::default();
+        record_try(&mut old, 0, Some(down()), None);
+        report(&alerts, &old, &notifier, &store, MINUTE).await;
+        assert_eq!(notifier.sent.borrow().len(), 1);
+        let mut new = ImportStatus::default();
+        retry_until_give_up(&alerts, &mut new, &notifier, &store).await;
+        report(&alerts, &new, &notifier, &store, 81 * MINUTE).await;
         assert_eq!(notifier.sent.borrow().len(), 1);
     }
 
