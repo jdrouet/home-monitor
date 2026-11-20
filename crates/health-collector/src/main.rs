@@ -134,7 +134,7 @@ async fn collect(mqtt: &MqttConfig, health: &HealthCollectorConfig) -> anyhow::R
 
 /// Pulls at startup, then at every daily pull time. The next deadline is
 /// fixed before a pull starts, so a slow pull cannot skip it. A failed pull
-/// is not retried before the next one.
+/// is not retried before the next one; the chained jobs retry inside the window.
 async fn pull_forever<
     H: ArchiveSource,
     P: Publisher,
@@ -184,8 +184,8 @@ async fn pull_once<
     let next = next_pull(started);
     let days = pull_days(started);
     jobs.send_modify(|status| status.next_pull = Some(next));
-    let record = |job: ImportJob, attempt: ImportAttempt| {
-        jobs.send_modify(|status| status.record(job, attempt, next, None));
+    let record = |job: ImportJob, attempt: ImportAttempt, next_retry: Option<Timestamp>| {
+        jobs.send_modify(|status| status.record(job, attempt, next, next_retry));
     };
     record(
         ImportJob::DailyPull,
@@ -193,10 +193,11 @@ async fn pull_once<
             started,
             ended: None,
         },
+        None,
     );
     let pull = collect_health(provider, publisher, source_id, &days).await;
     report_session(publisher, source_id, &pull, started).await;
-    record(ImportJob::DailyPull, pull.attempt(started, clock()));
+    record(ImportJob::DailyPull, pull.attempt(started, clock()), None);
     import
         .after_pull(
             &pull,

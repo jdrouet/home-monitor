@@ -429,6 +429,36 @@ mod tests {
     }
 
     #[test]
+    fn a_job_behind_one_in_backoff_waits_until_the_retry_completes() {
+        let stores = Stores {
+            yearly: MemoryBackfill::holding(pending(5)),
+            archive: MemoryBackfill::holding(pending(5)),
+            ..quiet()
+        };
+        let mut jobs = jobs_with(&[]);
+        let failed = ended(0, AttemptOutcome::Failed(ImportFailure::Unreachable));
+        jobs.record(ImportJob::HealthHistory, failed, at(0), Some(at(300)));
+        let waits = Some(ImportEta::WaitsFor {
+            job: ImportJob::HealthHistory,
+        });
+        assert_eq!(
+            eta(&snapshot(&stores, jobs.clone()), ImportJob::DailyArchive),
+            waits
+        );
+        jobs.record(ImportJob::HealthHistory, running(300), at(0), None);
+        jobs.record(
+            ImportJob::HealthHistory,
+            ended(300, AttemptOutcome::Done),
+            at(0),
+            None,
+        );
+        assert_eq!(
+            eta(&snapshot(&stores, jobs), ImportJob::DailyArchive),
+            Some(ImportEta::Unknown)
+        );
+    }
+
+    #[test]
     fn a_failed_daily_pull_holds_up_every_job_with_work() {
         let stores = Stores {
             archive: MemoryBackfill::holding(pending(5)),

@@ -30,6 +30,7 @@ mod history;
 mod import_copy;
 mod import_notification;
 mod import_progress;
+mod import_retry;
 mod import_summary;
 mod import_window;
 mod latest_values;

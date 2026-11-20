@@ -70,6 +70,12 @@ pub(crate) struct ScriptedSource {
     pub list_fails: bool,
     pub document_delay: Duration,
     pub opens: Mutex<usize>,
+    /// Outcomes of the first opens; later opens follow `open_fails`.
+    pub open_script: Mutex<VecDeque<Result<(), TestError>>>,
+    pub opened_at: Mutex<Vec<Instant>>,
+    /// What every day answers; empty unless a test opts in.
+    pub daily: DailyHealth,
+    pub days: Mutex<Vec<NaiveDate>>,
     pub requested: Mutex<Vec<(&'static str, DocumentKey)>>,
     pub script: Mutex<VecDeque<Result<Fetched, TestError>>>,
     pub list: Mutex<Vec<ActivityRef>>,
@@ -79,6 +85,18 @@ pub(crate) struct ScriptedSource {
 impl ScriptedSource {
     pub(crate) fn opens(&self) -> usize {
         *self.opens.lock().expect("lock")
+    }
+
+    pub(crate) fn opened_at(&self) -> Vec<Instant> {
+        self.opened_at.lock().expect("lock").clone()
+    }
+
+    pub(crate) fn days(&self) -> Vec<NaiveDate> {
+        self.days.lock().expect("lock").clone()
+    }
+
+    pub(crate) fn script_opens(&self, outcomes: impl IntoIterator<Item = Result<(), TestError>>) {
+        self.open_script.lock().expect("lock").extend(outcomes);
     }
 
     pub(crate) fn requested(&self) -> Vec<(&'static str, DocumentKey)> {
@@ -100,6 +118,11 @@ impl HealthProvider for ScriptedSource {
 
     async fn open(&self) -> Result<(), TestError> {
         *self.opens.lock().expect("lock") += 1;
+        self.opened_at.lock().expect("lock").push(Instant::now());
+        let scripted = self.open_script.lock().expect("lock").pop_front();
+        if let Some(outcome) = scripted {
+            return outcome;
+        }
         if self.open_fails {
             Err(TestError::Other)
         } else {
@@ -107,8 +130,9 @@ impl HealthProvider for ScriptedSource {
         }
     }
 
-    async fn daily(&self, _session: &(), _date: NaiveDate) -> Result<DailyHealth, TestError> {
-        Ok(DailyHealth::default())
+    async fn daily(&self, _session: &(), date: NaiveDate) -> Result<DailyHealth, TestError> {
+        self.days.lock().expect("lock").push(date);
+        Ok(self.daily)
     }
 
     fn is_session_error(error: &TestError) -> bool {
@@ -173,6 +197,7 @@ pub(crate) struct MemoryArchive {
     pub contains_fails: bool,
     pub put_fails: bool,
     pub(crate) entries: Mutex<HashMap<String, Stored>>,
+    pub(crate) writes: Mutex<HashMap<String, usize>>,
 }
 
 impl MemoryArchive {
@@ -190,6 +215,11 @@ impl MemoryArchive {
             .expect("seeding does not fail");
     }
 
+    /// How many times each key was written.
+    pub(crate) fn writes(&self) -> HashMap<String, usize> {
+        self.writes.lock().expect("lock").clone()
+    }
+
     pub(crate) fn count(&self) -> usize {
         self.entries.lock().expect("lock").len()
     }
@@ -198,6 +228,12 @@ impl MemoryArchive {
         if self.put_fails {
             return Err(io::Error::other("disk full"));
         }
+        *self
+            .writes
+            .lock()
+            .expect("lock")
+            .entry(format!("{key:?}"))
+            .or_default() += 1;
         self.entries
             .lock()
             .expect("lock")
