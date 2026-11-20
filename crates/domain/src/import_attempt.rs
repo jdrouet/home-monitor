@@ -14,7 +14,7 @@ pub struct ImportAttempt {
 pub struct AttemptEnd {
     pub at: Timestamp,
     pub outcome: AttemptOutcome,
-    #[serde(default, skip_serializing_if = "ImportCounts::is_empty")]
+    #[serde(default)]
     pub counts: ImportCounts,
 }
 

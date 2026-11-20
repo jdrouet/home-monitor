@@ -1,6 +1,5 @@
-use chrono::DateTime;
-use chrono_tz::Europe::Paris;
 use domain::Timestamp;
+use paris_clock::paris_datetime;
 
 /// `at` as `YYYY-MM-DD HH:MM` on the Europe/Paris clock; `—` for an instant
 /// outside the calendar range.
@@ -21,10 +20,7 @@ pub fn paris_day(at: Timestamp) -> String {
 }
 
 fn format_paris(at: Timestamp, format: &str) -> String {
-    DateTime::from_timestamp_micros(at.as_micros()).map_or_else(
-        || "—".to_owned(),
-        |utc| utc.with_timezone(&Paris).format(format).to_string(),
-    )
+    paris_datetime(at).map_or_else(|| "—".to_owned(), |time| time.format(format).to_string())
 }
 
 #[cfg(test)]

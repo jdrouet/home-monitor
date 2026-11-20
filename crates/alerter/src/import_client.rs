@@ -56,7 +56,7 @@ fn transport(error: reqwest::Error) -> ImportPollError {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::time::Duration;
 
     use axum::Router;
@@ -71,7 +71,7 @@ mod tests {
 
     const SENTINEL: &str = "SENTINEL_BODY_TEXT";
 
-    async fn serve(router: Router) -> Url {
+    pub(crate) async fn serve(router: Router) -> Url {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("binds");
         let port = listener.local_addr().expect("address").port();
         tokio::spawn(async move {

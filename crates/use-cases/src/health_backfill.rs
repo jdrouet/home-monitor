@@ -212,7 +212,7 @@ mod tests {
     use tokio::time::sleep;
     use tracing_subscriber::fmt::MakeWriter;
 
-    use crate::test_archive::{MemoryBackfill, START, after, clock};
+    use crate::test_archive::{MemoryBackfill, START, after, clock, counts};
     use crate::{BackfillCursor, DailyHealth, HealthBackfill, HealthProvider, Publisher};
 
     use super::{RunEnd, RunOutcome};
@@ -944,14 +944,6 @@ mod tests {
         store: &MemoryBackfill,
     ) -> RunOutcome {
         run_with(provider, publisher, store, after(DAY), clock()).await
-    }
-
-    fn counts(stored: u32, empty: u32, failed: u32) -> ImportCounts {
-        ImportCounts {
-            stored,
-            empty,
-            failed,
-        }
     }
 
     #[tokio::test(start_paused = true)]

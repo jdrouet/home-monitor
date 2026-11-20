@@ -1,6 +1,6 @@
 use domain::{AttemptOutcome, ImportEta, ImportJob, ImportJobStatus, ImportStatus, Timestamp};
 
-use crate::import_copy::{counts_text, failure_text, job_name, no_counts_text, progress_text};
+use crate::import_copy::{counts_text, failure_text, progress_text};
 
 /// Where one Garmin job stands for the owner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,14 +19,11 @@ pub enum ImportState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportLine {
     pub job: ImportJob,
-    pub name: &'static str,
     pub state: ImportState,
     pub started: Option<Timestamp>,
     pub ended: Option<Timestamp>,
-    /// What the latest ended attempt did, or that it did nothing.
-    pub counts: String,
-    /// Whether `counts` says something was done.
-    pub counted: bool,
+    /// What the latest ended attempt did; `None` when it did nothing.
+    pub counts: Option<String>,
     pub failure: Option<&'static str>,
     pub progress: Option<String>,
     pub eta: Option<ImportEta>,
@@ -52,7 +49,7 @@ pub fn build_import_summary(status: &ImportStatus) -> ImportSummary {
 }
 
 fn line(job: ImportJob, status: Option<&ImportJobStatus>) -> ImportLine {
-    let latest = status.and_then(ImportJobStatus::latest);
+    let latest = status.and_then(|status| status.attempts.last());
     let end = latest.and_then(|attempt| attempt.ended);
     let state = match end.map(|end| end.outcome) {
         _ if latest.is_none() => ImportState::NotRun,
@@ -64,15 +61,12 @@ fn line(job: ImportJob, status: Option<&ImportJobStatus>) -> ImportLine {
         Some(AttemptOutcome::Paused | AttemptOutcome::Capped) => ImportState::CatchingUp,
         Some(AttemptOutcome::Failed(_)) => ImportState::Failed,
     };
-    let counts = end.and_then(|end| counts_text(job, end.counts));
     ImportLine {
         job,
-        name: job_name(job),
         state,
         started: latest.map(|attempt| attempt.started),
         ended: end.map(|end| end.at),
-        counted: counts.is_some(),
-        counts: counts.unwrap_or_else(|| no_counts_text(job).to_owned()),
+        counts: end.and_then(|end| counts_text(job, end.counts)),
         failure: match end.map(|end| end.outcome) {
             Some(AttemptOutcome::Failed(reason)) => Some(failure_text(reason)),
             _ => None,
@@ -91,6 +85,8 @@ mod tests {
         ImportJob, ImportProgress, ImportStatus, Timestamp,
     };
 
+    use crate::test_archive::stored;
+
     use super::{ImportState, build_import_summary};
 
     fn at(micros: i64) -> Timestamp {
@@ -105,13 +101,6 @@ mod tests {
                 outcome,
                 counts,
             }),
-        }
-    }
-
-    fn stored(count: u32) -> ImportCounts {
-        ImportCounts {
-            stored: count,
-            ..ImportCounts::default()
         }
     }
 
@@ -152,8 +141,7 @@ mod tests {
         );
         let done = summary_of(ImportJob::Workouts, ended(AttemptOutcome::Done, stored(3)));
         assert_eq!(done.state, ImportState::Worked);
-        assert_eq!(done.counts, "3 new workouts archived");
-        assert!(done.counted);
+        assert_eq!(done.counts.as_deref(), Some("3 new workouts archived"));
         let partial = summary_of(
             ImportJob::MissedDays,
             ended(
@@ -166,7 +154,7 @@ mod tests {
             ),
         );
         assert_eq!(partial.state, ImportState::Partial);
-        assert_eq!(partial.counts, "1 stored, 2 skipped");
+        assert_eq!(partial.counts.as_deref(), Some("1 stored, 2 skipped"));
         let paused = summary_of(
             ImportJob::HealthHistory,
             ended(AttemptOutcome::Paused, stored(9)),
@@ -182,10 +170,9 @@ mod tests {
         assert_eq!(line.state, ImportState::Failed);
         assert_eq!(line.failure, Some("Garmin had a server error."));
         assert_eq!(line.retry_at, Some(at(100)));
-        assert!(line.counted);
+        assert!(line.counts.is_some());
         let quiet = summary_of(ImportJob::Workouts, ended(failed, ImportCounts::default()));
-        assert!(!quiet.counted);
-        assert_eq!(quiet.counts, "no new workouts");
+        assert_eq!(quiet.counts, None);
     }
 
     #[test]

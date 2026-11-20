@@ -13,41 +13,16 @@ use use_cases::ImportCursors;
 
 /// The recorded job status joined with the progress read from the cursors.
 pub struct ImportView {
-    jobs: watch::Receiver<ImportStatus>,
-    gap: BackfillFile,
-    yearly: BackfillFile,
-    activities: ActivityCursorFile,
-    archive: BackfillFile,
+    pub jobs: watch::Receiver<ImportStatus>,
+    pub cursors: ImportCursors<BackfillFile, ActivityCursorFile>,
 }
 
 impl ImportView {
-    pub fn new(
-        jobs: watch::Receiver<ImportStatus>,
-        gap: BackfillFile,
-        yearly: BackfillFile,
-        activities: ActivityCursorFile,
-        archive: BackfillFile,
-    ) -> Self {
-        Self {
-            jobs,
-            gap,
-            yearly,
-            activities,
-            archive,
-        }
-    }
-
     /// The encoded report at `now`. The next pull is the one the pull loop
     /// recorded, never recomputed here.
     pub fn report(&self, now: Timestamp) -> Vec<u8> {
         let jobs = self.jobs.borrow().clone();
-        let status = ImportCursors {
-            gap: &self.gap,
-            yearly: &self.yearly,
-            activities: &self.activities,
-            archive: &self.archive,
-        }
-        .status::<GarminConnect>(jobs, now);
+        let status = self.cursors.status::<GarminConnect>(jobs, now);
         import_report::encode(&status)
     }
 }
@@ -77,6 +52,7 @@ mod tests {
     };
     use state_file::{ActivityCursorFile, BackfillFile};
     use tokio::sync::watch;
+    use use_cases::ImportCursors;
 
     use super::{ImportView, imports};
 
@@ -86,13 +62,15 @@ mod tests {
 
     fn view(status: ImportStatus) -> (watch::Sender<ImportStatus>, ImportView) {
         let (sender, receiver) = watch::channel(status);
-        let view = ImportView::new(
-            receiver,
-            BackfillFile::new(missing("gap.json")),
-            BackfillFile::new(missing("yearly.json")),
-            ActivityCursorFile::new(missing("activities.json")),
-            BackfillFile::new(missing("archive.json")),
-        );
+        let view = ImportView {
+            jobs: receiver,
+            cursors: ImportCursors {
+                gap: BackfillFile::new(missing("gap.json")),
+                yearly: BackfillFile::new(missing("yearly.json")),
+                activities: ActivityCursorFile::new(missing("activities.json")),
+                archive: BackfillFile::new(missing("archive.json")),
+            },
+        };
         (sender, view)
     }
 

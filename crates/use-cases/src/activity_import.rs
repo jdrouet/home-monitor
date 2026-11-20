@@ -276,11 +276,11 @@ mod tests {
     use std::time::Duration;
 
     use chrono::NaiveDate;
-    use domain::{ImportCounts, ImportFailure};
+    use domain::ImportFailure;
     use tokio::time::Instant;
 
     use crate::test_archive::{
-        MemoryArchive, MemoryCursor, ScriptedSource, TestError, after, clock,
+        MemoryArchive, MemoryCursor, ScriptedSource, TestError, after, clock, stored,
     };
     use crate::{
         ActivityCursor, ActivityId, ActivityImport, ActivityRef, ArchiveKey, DocumentKey, Fetched,
@@ -379,13 +379,6 @@ mod tests {
 
     async fn run(source: &ScriptedSource, archive: &MemoryArchive, store: &MemoryCursor) -> RunEnd {
         outcome(source, archive, store).await.end
-    }
-
-    fn stored(count: u32) -> ImportCounts {
-        ImportCounts {
-            stored: count,
-            ..ImportCounts::default()
-        }
     }
 
     #[tokio::test(start_paused = true)]

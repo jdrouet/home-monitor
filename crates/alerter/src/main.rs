@@ -178,12 +178,11 @@ mod tests {
         AlertState, AttemptEnd, AttemptOutcome, ImportAttempt, ImportCounts, ImportFailure,
         ImportJob, ImportStatus, Timestamp, import_report,
     };
-    use reqwest::Url;
-    use tokio::net::TcpListener;
     use tracing_subscriber::fmt::MakeWriter;
     use use_cases::{AlertStateStore, Alerts, Notification, Notifier};
 
     use crate::import_client::ImportClient;
+    use crate::import_client::tests::serve;
 
     use super::{paris_time, poll_once};
 
@@ -266,14 +265,8 @@ mod tests {
         &CAPTURED
     }
 
-    async fn serve(router: Router) -> ImportClient {
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("binds");
-        let port = listener.local_addr().expect("address").port();
-        tokio::spawn(async move {
-            axum::serve(listener, router).await.expect("serves");
-        });
-        let url = Url::parse(&format!("http://127.0.0.1:{port}/imports")).expect("valid url");
-        ImportClient::new(url, Duration::from_millis(200))
+    async fn client_for(router: Router) -> ImportClient {
+        ImportClient::new(serve(router).await, Duration::from_millis(200))
     }
 
     fn give_up_report() -> Vec<u8> {
@@ -314,7 +307,7 @@ mod tests {
                 }
             }
         });
-        let client = serve(Router::new().route("/imports", handler)).await;
+        let client = client_for(Router::new().route("/imports", handler)).await;
         let (alerts, notifier) = (alerts(), FakeNotifier::default());
         poll_once(&client, &alerts, &notifier, &FakeStore).await;
         assert!(notifier.sent.borrow().is_empty());
@@ -331,7 +324,7 @@ mod tests {
             let body = body.clone();
             async move { body }
         });
-        let client = serve(Router::new().route("/imports", handler)).await;
+        let client = client_for(Router::new().route("/imports", handler)).await;
         let (alerts, notifier) = (alerts(), FakeNotifier::default());
         poll_once(&client, &alerts, &notifier, &FakeStore).await;
         let logs = String::from_utf8(captured.0.lock().expect("lock").clone()).expect("utf8");

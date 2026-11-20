@@ -23,7 +23,7 @@ use tokio::sync::watch;
 use tokio::time::sleep;
 use use_cases::{
     ActivityCursorStore, ActivityImport, ArchiveDays, ArchiveSource, BackfillStore, HealthBackfill,
-    HealthImport, Publisher, PullWindow, RawArchive, collect_health, report_session,
+    HealthImport, ImportCursors, Publisher, PullWindow, RawArchive, collect_health, report_session,
 };
 
 const CLIENT_ID: &str = "health-collector";
@@ -92,13 +92,15 @@ async fn collect(mqtt: &MqttConfig, health: &HealthCollectorConfig) -> anyhow::R
     let activity_store = activity_file();
     let archive_store = cursor_file(ARCHIVE_FILE);
     let (jobs, watched) = watch::channel(ImportStatus::default());
-    let router = import_view::router(ImportView::new(
-        watched,
-        cursor_file(GAP_FILE),
-        cursor_file(BACKFILL_FILE),
-        activity_file(),
-        cursor_file(ARCHIVE_FILE),
-    ));
+    let router = import_view::router(ImportView {
+        jobs: watched,
+        cursors: ImportCursors {
+            gap: cursor_file(GAP_FILE),
+            yearly: cursor_file(BACKFILL_FILE),
+            activities: activity_file(),
+            archive: cursor_file(ARCHIVE_FILE),
+        },
+    });
     let source_id = SourceId::from(GARMIN.to_owned());
     let import = HealthImport {
         gap: HealthBackfill {

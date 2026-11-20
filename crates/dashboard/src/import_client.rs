@@ -63,8 +63,8 @@ mod tests {
     use axum::http::StatusCode;
     use axum::routing::get;
     use domain::{ImportStatus, import_report};
-    use reqwest::Url;
-    use tokio::net::TcpListener;
+
+    use crate::page::serve;
 
     use super::{ImportClient, ImportClientError};
 
@@ -72,13 +72,8 @@ mod tests {
     async fn a_non_success_status_is_a_bad_response_even_with_a_valid_report() {
         let body = import_report::encode(&ImportStatus::default());
         let handler = get(move || async move { (StatusCode::MULTIPLE_CHOICES, body) });
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("binds");
-        let port = listener.local_addr().expect("address").port();
         let router = Router::new().route("/imports", handler);
-        tokio::spawn(async move {
-            axum::serve(listener, router).await.expect("serves");
-        });
-        let url = Url::parse(&format!("http://127.0.0.1:{port}/imports")).expect("valid url");
+        let url = serve(router).await;
         assert_eq!(
             ImportClient::new(url).status().await,
             Err(ImportClientError::BadResponse)

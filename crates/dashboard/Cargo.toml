@@ -9,7 +9,6 @@ anyhow.workspace = true
 askama = { workspace = true, features = ["serde_json"] }
 axum = { workspace = true, features = ["query"] }
 chrono.workspace = true
-chrono-tz.workspace = true
 config.workspace = true
 domain.workspace = true
 paris-clock.workspace = true

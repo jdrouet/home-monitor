@@ -804,7 +804,6 @@ dependencies = [
  "askama",
  "axum",
  "chrono",
- "chrono-tz",
  "config",
  "domain",
  "paris-clock",

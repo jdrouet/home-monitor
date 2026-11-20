@@ -78,6 +78,19 @@ pub async fn read(response: Response) -> (StatusCode, String) {
     )
 }
 
+/// Serves `router` on a free local port and returns the URL of its `/imports`.
+#[cfg(test)]
+pub async fn serve(router: axum::Router) -> reqwest::Url {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("binds");
+    let port = listener.local_addr().expect("address").port();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.expect("serves");
+    });
+    reqwest::Url::parse(&format!("http://127.0.0.1:{port}/imports")).expect("valid url")
+}
+
 /// Parses an RFC 3339 instant.
 #[cfg(test)]
 pub fn at(rfc3339: &str) -> domain::Timestamp {

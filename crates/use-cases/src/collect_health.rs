@@ -133,6 +133,7 @@ mod tests {
         SourceId, SourceKind, Timestamp,
     };
 
+    use crate::test_archive::counts;
     use crate::{DailyHealth, HealthDay, HealthProvider, Publisher};
 
     use super::{HealthPull, collect_health};
@@ -161,14 +162,6 @@ mod tests {
         HealthDay {
             date: date(day_of_month),
             stamp: Timestamp::from_micros(i64::from(day_of_month)),
-        }
-    }
-
-    fn counts(stored: u32, empty: u32, failed: u32) -> ImportCounts {
-        ImportCounts {
-            stored,
-            empty,
-            failed,
         }
     }
 

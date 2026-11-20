@@ -2,7 +2,7 @@ use askama::Template;
 use axum::http::StatusCode;
 use axum::response::Response;
 use domain::{ImportEta, Timestamp};
-use use_cases::{ImportLine, ImportState, ImportSummary, job_name};
+use use_cases::{ImportLine, ImportState, ImportSummary, job_name, no_counts_text};
 
 use crate::page::{self, Page};
 use crate::paris_time::{paris_day, paris_hour_minute, paris_time};
@@ -59,34 +59,29 @@ pub fn render(imports: Imports<'_>, now: Timestamp) -> Response {
 
 fn card(line: &ImportLine, next_pull: Option<Timestamp>, now: Timestamp) -> Card {
     let when = |at: Option<Timestamp>| at.map_or_else(|| "—".to_owned(), paris_time);
-    let (badge_class, badge, status) = match line.state {
+    let counts = line
+        .counts
+        .as_deref()
+        .unwrap_or_else(|| no_counts_text(line.job));
+    let (badge, status) = match line.state {
         ImportState::NotRun => (
-            "badge--neutral",
             "Not run yet",
             "Not run since the health collector started.".to_owned(),
         ),
-        ImportState::Running => (
-            "badge--neutral",
-            "Running",
-            format!("Running since {}.", when(line.started)),
-        ),
-        ImportState::Worked => (
-            "badge--neutral",
-            "Up to date",
-            format!("Worked at {}: {}.", when(line.ended), line.counts),
-        ),
-        ImportState::Partial => (
-            "badge--neutral",
-            "Partial",
-            format!("Worked at {}: {}.", when(line.ended), line.counts),
+        ImportState::Running => ("Running", format!("Running since {}.", when(line.started))),
+        ImportState::Worked | ImportState::Partial => (
+            if line.state == ImportState::Partial {
+                "Partial"
+            } else {
+                "Up to date"
+            },
+            format!("Worked at {}: {counts}.", when(line.ended)),
         ),
         ImportState::CatchingUp => (
-            "badge--neutral",
             "Catching up",
-            format!("Paused at {}: {}.", when(line.ended), line.counts),
+            format!("Paused at {}: {counts}.", when(line.ended)),
         ),
         ImportState::Failed => (
-            "badge--alert",
             "Failed",
             format!(
                 "Failed at {}: {}",
@@ -94,6 +89,11 @@ fn card(line: &ImportLine, next_pull: Option<Timestamp>, now: Timestamp) -> Card
                 line.failure.unwrap_or("")
             ),
         ),
+    };
+    let badge_class = if line.state == ImportState::Failed {
+        "badge--alert"
+    } else {
+        "badge--neutral"
     };
     let mut details: Vec<String> = Vec::new();
     if line.state == ImportState::Failed {
@@ -103,8 +103,8 @@ fn card(line: &ImportLine, next_pull: Option<Timestamp>, now: Timestamp) -> Card
     details.extend(line.eta.map(eta_text));
     match line.state {
         ImportState::Failed => {
-            if line.counted {
-                details.push(format!("{} before it stopped.", line.counts));
+            if let Some(counts) = &line.counts {
+                details.push(format!("{counts} before it stopped."));
             }
         }
         ImportState::CatchingUp => {
@@ -118,7 +118,7 @@ fn card(line: &ImportLine, next_pull: Option<Timestamp>, now: Timestamp) -> Card
         _ => {}
     }
     Card {
-        name: line.name,
+        name: job_name(line.job),
         badge_class,
         badge,
         status,

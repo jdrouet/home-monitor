@@ -382,7 +382,7 @@ impl Alerts {
 /// The reason and the pull a job waits for, when its latest attempt ended in a
 /// failure the owner has to hear about.
 fn give_up(job: ImportJob, status: &ImportJobStatus) -> Option<(ImportFailure, Timestamp)> {
-    let end = status.latest()?.ended?;
+    let end = status.attempts.last()?.ended?;
     let AttemptOutcome::Failed(failure) = end.outcome else {
         return None;
     };

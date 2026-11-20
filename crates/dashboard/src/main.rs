@@ -194,12 +194,11 @@ mod tests {
     use axum::routing::get;
     use config::Config;
     use reqwest::Url;
-    use tokio::net::TcpListener;
     use tracing_subscriber::fmt::MakeWriter;
 
     use crate::alerter_client::AlerterClient;
     use crate::import_client::ImportClient;
-    use crate::page::read;
+    use crate::page::{read, serve};
     use crate::store_client::StoreClient;
 
     use super::{AppState, alerts, app, health, history, imports, overview};
@@ -315,12 +314,7 @@ mod tests {
         let captured = capture();
         let body = r#"{"version":1,"jobs":"<script>sentinel</script>"}"#;
         let router = Router::new().route("/imports", get(move || async move { body }));
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("binds");
-        let port = listener.local_addr().expect("address").port();
-        tokio::spawn(async move {
-            axum::serve(listener, router).await.expect("serves");
-        });
-        let url = Url::parse(&format!("http://127.0.0.1:{port}/imports")).expect("valid url");
+        let url = serve(router).await;
         let mut state = unreachable_state();
         Arc::get_mut(&mut state).expect("sole owner").imports = Some(ImportClient::new(url));
         let (status, html) = read(imports(State(state)).await).await;
@@ -345,12 +339,7 @@ mod tests {
         let status = domain::ImportStatus::default();
         let body = domain::import_report::encode(&status);
         let router = Router::new().route("/imports", get(move || async move { body }));
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("binds");
-        let port = listener.local_addr().expect("address").port();
-        tokio::spawn(async move {
-            axum::serve(listener, router).await.expect("serves");
-        });
-        let url = Url::parse(&format!("http://127.0.0.1:{port}/imports")).expect("valid url");
+        let url = serve(router).await;
         let mut state = unreachable_state();
         Arc::get_mut(&mut state).expect("sole owner").imports = Some(ImportClient::new(url));
         let (status, html) = read(imports(State(state)).await).await;

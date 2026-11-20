@@ -59,7 +59,7 @@ pub(crate) fn counts_text(job: ImportJob, counts: ImportCounts) -> Option<String
 }
 
 /// What to say when an attempt did nothing.
-pub(crate) fn no_counts_text(job: ImportJob) -> &'static str {
+pub fn no_counts_text(job: ImportJob) -> &'static str {
     match job {
         ImportJob::DailyPull => "no days pulled",
         ImportJob::MissedDays | ImportJob::HealthHistory => "nothing to import",
@@ -91,6 +91,8 @@ pub(crate) fn progress_text(progress: ImportProgress) -> String {
 mod tests {
     use chrono::NaiveDate;
     use domain::{ImportCounts, ImportFailure, ImportJob, ImportProgress};
+
+    use crate::test_archive::counts;
 
     use super::{counts_text, failure_text, job_name, no_counts_text, progress_text};
 
@@ -132,14 +134,6 @@ mod tests {
                 "Daily archive",
             ]
         );
-    }
-
-    fn counts(stored: u32, empty: u32, failed: u32) -> ImportCounts {
-        ImportCounts {
-            stored,
-            empty,
-            failed,
-        }
     }
 
     #[test]
