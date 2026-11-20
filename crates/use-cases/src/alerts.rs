@@ -232,13 +232,14 @@ impl Alerts {
     /// one last delivered for the job and still ahead, checked just before the
     /// send. A daily pull refused for its login is left to the login alert. A
     /// failed send is retried by the next report; a failed save by the next
-    /// check.
+    /// check. `local_time` shows the next try in the owner's time zone.
     pub async fn notify_imports<N: Notifier, S: AlertStateStore, C: Fn() -> Timestamp>(
         &self,
         status: &ImportStatus,
         notifier: &N,
         store: &S,
         now: C,
+        local_time: impl Fn(Timestamp) -> String,
     ) {
         for (job, job_status) in &status.jobs {
             let Some((failure, retry_at)) = give_up(*job, job_status) else {
@@ -248,7 +249,7 @@ impl Alerts {
                 continue;
             }
             match notifier
-                .notify(&import_notification(*job, failure, retry_at))
+                .notify(&import_notification(*job, failure, &local_time(retry_at)))
                 .await
             {
                 Ok(()) => {
@@ -1368,6 +1369,10 @@ mod tests {
         assert_eq!(alerts.state(at(MINUTE)).garmin_login, None);
     }
 
+    fn local(at: Timestamp) -> String {
+        format!("local {}", (at.as_micros() - START) / 1_000_000)
+    }
+
     fn gave_up(records: &[(ImportJob, ImportFailure, i64)]) -> ImportStatus {
         let mut status = ImportStatus::default();
         for (job, failure, retry_secs) in records {
@@ -1396,7 +1401,7 @@ mod tests {
         now: i64,
     ) {
         alerts
-            .notify_imports(status, notifier, store, || at(now))
+            .notify_imports(status, notifier, store, || at(now), local)
             .await;
     }
 
@@ -1412,6 +1417,7 @@ mod tests {
             ["Garmin import stopped: Workout archive"]
         );
         assert!(notifier.messages()[0].contains("Garmin had a server error."));
+        assert!(notifier.messages()[0].ends_with("daily pull, local 36000."));
         let saved = store.saved.borrow();
         assert_eq!(
             saved.last().expect("saved").garmin_imports[&ImportJob::Workouts],
@@ -1551,7 +1557,7 @@ mod tests {
             (ImportJob::Workouts, ImportFailure::GarminDown, HOUR),
         ]);
         alerts
-            .notify_imports(&status, &notifier, &store, || at(clock.get()))
+            .notify_imports(&status, &notifier, &store, || at(clock.get()), local)
             .await;
         assert_eq!(
             notifier.titles(),

@@ -7,6 +7,7 @@ use config::Config;
 use domain::{AlertState, Timestamp};
 use import_client::ImportClient;
 use ntfy::{NtfyNotifier, NtfyTopic};
+use paris_clock::paris_datetime;
 use reqwest::Url;
 use state_file::StateFile;
 use tokio::net::TcpListener;
@@ -92,6 +93,14 @@ async fn poll_imports<N: Notifier, S: AlertStateStore>(
     }
 }
 
+/// `at` on the Europe/Paris clock, as the notifications show the next try.
+fn paris_time(at: Timestamp) -> String {
+    paris_datetime(at).map_or_else(
+        || "an unknown time".to_owned(),
+        |time| format!("{} Paris time", time.format("%Y-%m-%d %H:%M")),
+    )
+}
+
 /// A failed poll is logged by category and skipped; it changes nothing else.
 async fn poll_once<N: Notifier, S: AlertStateStore>(
     client: &ImportClient,
@@ -102,7 +111,7 @@ async fn poll_once<N: Notifier, S: AlertStateStore>(
     match client.status().await {
         Ok(status) => {
             alerts
-                .notify_imports(&status, notifier, store, Timestamp::now)
+                .notify_imports(&status, notifier, store, Timestamp::now, paris_time)
                 .await;
         }
         Err(error) => warn!(%error, "cannot read the import status, skipping this poll"),
@@ -176,9 +185,19 @@ mod tests {
 
     use crate::import_client::ImportClient;
 
-    use super::poll_once;
+    use super::{paris_time, poll_once};
 
     const SENTINEL: &str = "SENTINEL_BODY_TEXT";
+
+    #[test]
+    fn the_next_try_is_shown_in_paris_time() {
+        let summer = Timestamp::from_micros(1_784_188_800_000_000);
+        assert_eq!(paris_time(summer), "2026-07-16 10:00 Paris time");
+        assert_eq!(
+            paris_time(Timestamp::from_micros(i64::MAX)),
+            "an unknown time"
+        );
+    }
 
     #[derive(Default)]
     struct FakeNotifier {

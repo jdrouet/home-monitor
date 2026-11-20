@@ -11,6 +11,7 @@ config.workspace = true
 domain.workspace = true
 mqtt.workspace = true
 ntfy.workspace = true
+paris-clock.workspace = true
 reqwest.workspace = true
 state-file.workspace = true
 thiserror.workspace = true
