@@ -52,9 +52,11 @@ define the jobs and the chain that runs after each daily pull.
   day (gap fill, backfill) costs 62 s (one 60 s step plus the session reopen
   every 30 min spread over its steps). An archive day costs a 60 s step plus its
   paced documents at a mean 4.5 s gap, about 254 s for 43 daily documents. The
-  constants sit beside the catalog counts. An estimate "at" a time is given only
-  for the runner active at the last record, and only when it ends within the
-  window cutoff (the next pull minus the 5 min margin). "Waits for" is given
+  constants sit beside the catalog counts. The runner active at the last record
+  gets an estimate "at" a time when its remaining work ends within the window
+  cutoff (the next pull minus the 5 min margin). Otherwise it gets a count of
+  further import days: remaining time divided by a window of 24 h minus the
+  5 min margin, rounded up. "Waits for" is given
   only when the recorded chain state proves the dependency: an earlier job is
   running or stopped in the current window. Every other case is unknown,
   including a missing or unreadable cursor, workout history, a finished activity

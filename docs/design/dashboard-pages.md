@@ -284,8 +284,9 @@ Secondary lines, in this order, each only when it applies:
 - Progress. Days with left > 0: "Up to {done_through} · {left} days left".
   Days with left 0: "Complete up to {done_through}". Workouts incomplete:
   "Walking the workout history". Workouts complete: "Workout history complete".
-- Finish time: "Should finish around {time}", "Waits for {job name}" or
-  "Finish time unknown".
+- Finish time: "Should finish around {time}", "About 1 more import day" or
+  "About {n} more import days" (the active job when its work does not fit
+  before the next pull), "Waits for {job name}" or "Finish time unknown".
 - Next try, after a failure: "Tries again at {time} ({date})" while the job's
   retry time is ahead, otherwise "Will try again at the next daily pull". A
   job whose progress file is unreadable adds "Its progress file is unreadable
