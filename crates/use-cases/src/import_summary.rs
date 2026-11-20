@@ -13,6 +13,8 @@ pub enum ImportState {
     Partial,
     /// The latest attempt ran out of time and continues after the next pull.
     CatchingUp,
+    /// The latest attempt failed and a retry is planned.
+    Retrying,
     Failed,
 }
 
@@ -27,8 +29,12 @@ pub struct ImportLine {
     pub failure: Option<&'static str>,
     pub progress: Option<String>,
     pub eta: Option<ImportEta>,
-    /// The scheduled pull a failed job waits for.
+    /// The scheduled pull a job that gave up waits for.
     pub retry_at: Option<Timestamp>,
+    /// Retries that ran before the latest attempt in this window.
+    pub retries: usize,
+    /// The instant of a planned retry.
+    pub next_retry: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +57,7 @@ pub fn build_import_summary(status: &ImportStatus) -> ImportSummary {
 fn line(job: ImportJob, status: Option<&ImportJobStatus>) -> ImportLine {
     let latest = status.and_then(|status| status.attempts.last());
     let end = latest.and_then(|attempt| attempt.ended);
+    let next_retry = status.and_then(|status| status.next_retry);
     let state = match end.map(|end| end.outcome) {
         _ if latest.is_none() => ImportState::NotRun,
         None => ImportState::Running,
@@ -59,6 +66,7 @@ fn line(job: ImportJob, status: Option<&ImportJobStatus>) -> ImportLine {
         }
         Some(AttemptOutcome::Done) => ImportState::Worked,
         Some(AttemptOutcome::Paused | AttemptOutcome::Capped) => ImportState::CatchingUp,
+        Some(AttemptOutcome::Failed(_)) if next_retry.is_some() => ImportState::Retrying,
         Some(AttemptOutcome::Failed(_)) => ImportState::Failed,
     };
     ImportLine {
@@ -74,6 +82,8 @@ fn line(job: ImportJob, status: Option<&ImportJobStatus>) -> ImportLine {
         progress: status.and_then(|status| status.progress).map(progress_text),
         eta: status.and_then(|status| status.eta),
         retry_at: status.and_then(|status| status.retry_at),
+        retries: status.map_or(0, |status| status.attempts.len().saturating_sub(1)),
+        next_retry,
     }
 }
 
@@ -196,5 +206,78 @@ mod tests {
         assert_eq!(line.eta, Some(ImportEta::ImportDays { days: 2 }));
         assert_eq!(line.state, ImportState::NotRun);
         assert_eq!(summary.next_pull, Some(at(7)));
+    }
+
+    #[test]
+    fn a_planned_retry_is_retrying_with_its_count() {
+        let failed = AttemptOutcome::Failed(ImportFailure::GarminDown);
+        let mut status = ImportStatus::default();
+        status.record(
+            ImportJob::Workouts,
+            ended(failed, ImportCounts::default()),
+            at(100),
+            Some(at(50)),
+        );
+        let line = build_import_summary(&status).lines.remove(3);
+        assert_eq!(line.state, ImportState::Retrying);
+        assert_eq!((line.retries, line.next_retry), (0, Some(at(50))));
+        assert_eq!(line.failure, Some("Garmin had a server error."));
+        assert_eq!(line.retry_at, None);
+    }
+
+    #[test]
+    fn a_success_on_retry_2_is_worked_with_two_retries() {
+        let failed = AttemptOutcome::Failed(ImportFailure::Unreachable);
+        let attempt = |started, outcome| ImportAttempt {
+            started: at(started),
+            ended: Some(AttemptEnd {
+                at: at(started + 1),
+                outcome,
+                counts: ImportCounts::default(),
+            }),
+        };
+        let mut status = ImportStatus::default();
+        for (started, outcome, retry) in [
+            (1, failed, Some(at(50))),
+            (50, failed, Some(at(90))),
+            (90, AttemptOutcome::Done, None),
+        ] {
+            status.record(
+                ImportJob::Workouts,
+                attempt(started, outcome),
+                at(100),
+                retry,
+            );
+        }
+        let line = build_import_summary(&status).lines.remove(3);
+        assert_eq!((line.state, line.retries), (ImportState::Worked, 2));
+    }
+
+    #[test]
+    fn a_give_up_after_retries_is_failed_with_three_retries() {
+        let failed = AttemptOutcome::Failed(ImportFailure::GarminDown);
+        let attempt = |started, retry| {
+            let attempt = ImportAttempt {
+                started: at(started),
+                ended: Some(AttemptEnd {
+                    at: at(started + 1),
+                    outcome: failed,
+                    counts: ImportCounts::default(),
+                }),
+            };
+            (attempt, retry)
+        };
+        let mut status = ImportStatus::default();
+        for (attempt, retry) in [
+            attempt(1, Some(at(10))),
+            attempt(10, Some(at(20))),
+            attempt(20, Some(at(30))),
+            attempt(30, None),
+        ] {
+            status.record(ImportJob::Workouts, attempt, at(100), retry);
+        }
+        let line = build_import_summary(&status).lines.remove(3);
+        assert_eq!((line.state, line.retries), (ImportState::Failed, 3));
+        assert_eq!(line.retry_at, Some(at(100)));
     }
 }

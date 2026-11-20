@@ -240,13 +240,25 @@ fn import_status(
     records: &[(ImportJob, ImportAttempt)],
     extras: &[(ImportJob, ImportProgress, ImportEta)],
 ) -> ImportSummary {
+    let records: Vec<_> = records
+        .iter()
+        .map(|(job, attempt)| (*job, *attempt, None))
+        .collect();
+    retry_status(&records, extras)
+}
+
+/// Like `import_status`, each record carrying the retry planned when it ended.
+fn retry_status(
+    records: &[(ImportJob, ImportAttempt, Option<Timestamp>)],
+    extras: &[(ImportJob, ImportProgress, ImportEta)],
+) -> ImportSummary {
     let next_pull = at("2026-01-16T09:00:00Z");
     let mut status = ImportStatus {
         next_pull: Some(next_pull),
         ..ImportStatus::default()
     };
-    for (job, attempt) in records {
-        status.record(*job, *attempt, next_pull, None);
+    for (job, attempt, retry) in records {
+        status.record(*job, *attempt, next_pull, *retry);
     }
     for (job, progress, eta) in extras {
         let entry = status.jobs.entry(*job).or_default();
@@ -341,6 +353,96 @@ fn imports_catching_up() -> ImportSummary {
     )
 }
 
+fn failed(started: &str, finished: &str) -> ImportAttempt {
+    ended(
+        started,
+        finished,
+        AttemptOutcome::Failed(ImportFailure::GarminDown),
+        0,
+    )
+}
+
+fn imports_retrying() -> ImportSummary {
+    let retry = |at_time: &str| Some(at(at_time));
+    retry_status(
+        &[
+            (
+                ImportJob::Workouts,
+                failed("2026-01-15T12:30:00Z", "2026-01-15T12:31:00Z"),
+                retry("2026-01-15T12:36:00Z"),
+            ),
+            (
+                ImportJob::Workouts,
+                failed("2026-01-15T12:36:00Z", "2026-01-15T12:37:00Z"),
+                retry("2026-01-15T12:52:00Z"),
+            ),
+            (
+                ImportJob::HealthHistory,
+                failed("2026-01-15T12:20:00Z", "2026-01-15T12:21:00Z"),
+                retry("2026-01-15T12:26:00Z"),
+            ),
+            (
+                ImportJob::HealthHistory,
+                running("2026-01-15T12:41:00Z"),
+                None,
+            ),
+        ],
+        &[(
+            ImportJob::Workouts,
+            ImportProgress::Workouts { complete: false },
+            ImportEta::Unknown,
+        )],
+    )
+}
+
+fn imports_retried() -> ImportSummary {
+    retry_status(
+        &[
+            (
+                ImportJob::DailyArchive,
+                failed("2026-01-15T09:10:00Z", "2026-01-15T09:11:00Z"),
+                Some(at("2026-01-15T09:16:00Z")),
+            ),
+            (
+                ImportJob::DailyArchive,
+                failed("2026-01-15T09:16:00Z", "2026-01-15T09:17:00Z"),
+                Some(at("2026-01-15T09:32:00Z")),
+            ),
+            (
+                ImportJob::DailyArchive,
+                ended(
+                    "2026-01-15T09:32:00Z",
+                    "2026-01-15T09:40:00Z",
+                    AttemptOutcome::Done,
+                    12,
+                ),
+                None,
+            ),
+            (
+                ImportJob::MissedDays,
+                failed("2026-01-15T09:00:00Z", "2026-01-15T09:01:00Z"),
+                Some(at("2026-01-15T09:06:00Z")),
+            ),
+            (
+                ImportJob::MissedDays,
+                failed("2026-01-15T09:06:00Z", "2026-01-15T09:07:00Z"),
+                Some(at("2026-01-15T09:22:00Z")),
+            ),
+            (
+                ImportJob::MissedDays,
+                failed("2026-01-15T09:22:00Z", "2026-01-15T09:23:00Z"),
+                Some(at("2026-01-15T10:23:00Z")),
+            ),
+            (
+                ImportJob::MissedDays,
+                failed("2026-01-15T10:23:00Z", "2026-01-15T10:24:00Z"),
+                None,
+            ),
+        ],
+        &[],
+    )
+}
+
 fn write_bytes(root: &Path, relative: &str, contents: &[u8]) {
     let path = root.join(relative);
     fs::create_dir_all(path.parent().expect("path has a parent")).expect("directory is created");
@@ -366,8 +468,10 @@ async fn write_preview_pages() {
     let mixed = imports_mixed();
     let catching_up = imports_catching_up();
     let never_run = import_status(&[], &[]);
+    let retrying = imports_retrying();
+    let retried = imports_retried();
 
-    let pages: [(&str, Response); 20] = [
+    let pages: [(&str, Response); 22] = [
         (
             "index.html",
             overview_page::render(Some(&full), Some(&alerts(3)), day),
@@ -426,6 +530,14 @@ async fn write_preview_pages() {
         (
             "states/imports-catching-up.html",
             imports_page::render(Imports::Report(&catching_up), day),
+        ),
+        (
+            "states/imports-retrying.html",
+            imports_page::render(Imports::Report(&retrying), day),
+        ),
+        (
+            "states/imports-retried.html",
+            imports_page::render(Imports::Report(&retried), day),
         ),
         (
             "states/imports-never-run.html",

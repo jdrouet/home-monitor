@@ -81,6 +81,7 @@ pub use history::{
 };
 pub use import_copy::{job_name, no_counts_text};
 pub use import_progress::ImportCursors;
+pub use import_retry::MAX_RETRIES;
 pub use import_summary::{ImportLine, ImportState, ImportSummary, build_import_summary};
 pub use latest_values::LatestValues;
 pub use measurement_store::MeasurementStore;

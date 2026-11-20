@@ -11,6 +11,9 @@ pub(crate) const RETRY_DELAYS: [Duration; 3] = [
     Duration::from_secs(60 * 60),
 ];
 
+/// Retries a job gets in one window.
+pub const MAX_RETRIES: usize = RETRY_DELAYS.len();
+
 /// Garmin did not answer, or answered badly. A rate limit is not a bad answer:
 /// retrying it could lengthen the block. The other reasons need the owner.
 pub(crate) fn is_transient(failure: ImportFailure) -> bool {
