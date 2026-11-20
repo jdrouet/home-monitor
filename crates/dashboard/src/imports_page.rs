@@ -21,6 +21,8 @@ struct Card {
     badge_class: &'static str,
     badge: &'static str,
     status: String,
+    /// The planned retry, shown right under the status in the primary colour.
+    pending: Option<String>,
     details: Vec<String>,
 }
 
@@ -88,7 +90,12 @@ fn card(line: &ImportLine, next_pull: Option<Timestamp>, now: Timestamp) -> Card
                 "Retrying"
             },
             format!(
-                "Failed at {}: {}",
+                "{} at {}: {}",
+                if line.state == ImportState::Failed {
+                    "Failed"
+                } else {
+                    "Last try failed"
+                },
                 when(line.ended),
                 line.failure.unwrap_or("")
             ),
@@ -103,7 +110,13 @@ fn card(line: &ImportLine, next_pull: Option<Timestamp>, now: Timestamp) -> Card
     if line.state == ImportState::Failed {
         details.push(next_try(line.retry_at, now));
     }
-    details.extend(retry_text(line));
+    let retry = retry_text(line);
+    let pending = if line.state == ImportState::Retrying {
+        retry
+    } else {
+        details.extend(retry);
+        None
+    };
     details.extend(line.progress.clone());
     details.extend(line.eta.map(eta_text));
     match line.state {
@@ -127,6 +140,7 @@ fn card(line: &ImportLine, next_pull: Option<Timestamp>, now: Timestamp) -> Card
         badge_class,
         badge,
         status,
+        pending,
         details,
     }
 }
@@ -370,7 +384,8 @@ mod tests {
         job.progress = Some(ImportProgress::Workouts { complete: false });
         let (_, html) = page(&build_import_summary(&status)).await;
         assert!(html.contains(r#"badge--warn">Retrying"#));
-        assert!(html.contains("Failed at 2026-01-15 11:01: Garmin had a server error."));
+        assert!(html.contains("Last try failed at 2026-01-15 11:01: Garmin had a server error."));
+        assert!(html.contains(r#"secondary secondary--now">Retrying at 13:30"#));
         assert!(html.contains("Retrying at 13:30 (retry 1 of 3)."));
         assert!(!html.contains("Tries again at"));
         let retry = html.find("Retrying at").expect("retry line");

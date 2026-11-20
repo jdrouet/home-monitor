@@ -278,14 +278,15 @@ time, next try. The view shows the latest attempt and how many retries ran befor
 | Done | `badge--neutral` "Up to date" | "Worked at {ended}: {counts}." |
 | Partial (done, some days failed) | `badge--neutral` "Partial" | "Worked at {ended}: {counts}." Never shown as "Up to date". |
 | Catching up (paused) | `badge--neutral` "Catching up" | "Paused at {ended}: {counts}." |
-| Retrying (failed, retry planned) | `badge--warn` "Retrying" | "Failed at {ended}: {reason}" |
+| Retrying (failed, retry planned) | `badge--warn` "Retrying" | "Last try failed at {ended}: {reason}" |
 | Failed (gave up) | `badge--alert` "Failed" | "Failed at {ended}: {reason}" |
 
 Secondary lines, in this order, each only when it applies. A failed card
 shows its next try first, so the owner sees when it recovers before the detail.
 The retry line comes next, or first on every other card:
 - Retry line, only when retries ran or one is planned (3 retries at most):
-  Retrying: "Retrying at {HH:MM} (retry {n} of 3)." with n the attempts so far.
+  Retrying: "Retrying at {HH:MM} (retry {n} of 3)." with n the attempts so far,
+  in `--text` rather than muted (`.secondary--now`), as the one line to read.
   Running: "Retry {n} of 3." Done: "Worked on retry {n}." Partial: "Partly worked
   on retry {n}." Paused or capped: "Catching up after retry {n}." Gave up:
   "The retry failed." for one retry, else "{n} retries failed."
