@@ -27,6 +27,7 @@ mod health_day;
 mod health_import;
 mod health_provider;
 mod history;
+mod import_progress;
 mod import_window;
 mod latest_values;
 mod login_notification;
@@ -74,6 +75,7 @@ pub use health_provider::HealthProvider;
 pub use history::{
     HISTORY_METRICS, HistoryChart, HistorySelection, Period, build_history, history_query,
 };
+pub use import_progress::ImportCursors;
 pub use latest_values::LatestValues;
 pub use measurement_store::MeasurementStore;
 pub use notification::Notification;
