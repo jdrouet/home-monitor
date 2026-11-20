@@ -235,6 +235,10 @@ health collector serves this from memory on its `http_listen` port, so after a
 restart a job reads "Not run yet" until the next pull reaches it. When a job
 gives up, `alerter` sends one ntfy notification naming the job and the time of
 the next try; a daily pull refused for its login is left to the login alert.
+A job that fails because Garmin did not answer, or answered badly, retries after
+5, 15 and 60 minutes before it gives up and notifies; throttling, login and disk
+problems wait for the next daily pull. A health day skipped on such an error can
+stay missing.
 The notification can be lost if the collector restarts or the alerter cannot
 reach it for more than a minute around the give-up
 ([ADR-0027](docs/adr/0027-garmin-import-status.md)).
