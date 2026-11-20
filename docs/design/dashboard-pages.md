@@ -280,7 +280,8 @@ time, next try. The view shows only the latest attempt.
 | Catching up (paused) | `badge--neutral` "Catching up" | "Paused at {ended}: {counts}." |
 | Failed | `badge--alert` "Failed" | "Failed at {ended}: {reason}" |
 
-Secondary lines, in this order, each only when it applies:
+Secondary lines, in this order, each only when it applies. A failed card
+shows its next try first, so the owner sees when it recovers before the detail:
 - Progress. Days with left > 0: "Up to {done_through} · {left} days left".
   Days with left 0: "Complete up to {done_through}". Workouts incomplete:
   "Walking the workout history". Workouts complete: "Workout history complete".
@@ -296,8 +297,8 @@ Secondary lines, in this order, each only when it applies:
 
 | State | What the owner sees | Status |
 |---|---|---|
-| Collector unreachable | A warning notice replaces the grid: "**Import status unavailable.** The health collector did not respond. This page retries every minute." | 502 |
-| Garmin not set up (no `[health_collector]`) | A neutral notice: "**Garmin is not set up.** Add a [health_collector] section to config.toml, then log in." | 200 |
+| Collector unreachable | A warning notice (`role="status"`) replaces the grid: "**Import status unavailable.** The health collector did not respond. This page retries every minute." | 502 |
+| Garmin not set up (no `[health_collector]`) | A neutral notice (`role="status"`) with a neutral "Not set up" badge: "**Garmin is not set up.** Add a [health_collector] section to config.toml, then log in." | 200 |
 | Report | The grid | 200 |
 
 ## CSS delivery and templates

@@ -96,11 +96,13 @@ fn card(line: &ImportLine, next_pull: Option<Timestamp>, now: Timestamp) -> Card
         ),
     };
     let mut details: Vec<String> = Vec::new();
+    if line.state == ImportState::Failed {
+        details.push(next_try(line.retry_at, now));
+    }
     details.extend(line.progress.clone());
     details.extend(line.eta.map(eta_text));
     match line.state {
         ImportState::Failed => {
-            details.push(next_try(line.retry_at, now));
             if line.counted {
                 details.push(format!("{} before it stopped.", line.counts));
             }
@@ -259,6 +261,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_failed_card_shows_the_next_try_before_progress_and_finish() {
+        let failed = attempt(
+            Some(AttemptOutcome::Failed(ImportFailure::GarminDown)),
+            ImportCounts::default(),
+        );
+        let mut status = ImportStatus {
+            next_pull: Some(at("2026-01-16T09:00:00Z")),
+            ..ImportStatus::default()
+        };
+        status.record(ImportJob::Workouts, failed, at("2026-01-16T09:00:00Z"));
+        let job = status.jobs.entry(ImportJob::Workouts).or_default();
+        job.progress = Some(ImportProgress::Workouts { complete: false });
+        job.eta = Some(ImportEta::Unknown);
+        let (_, html) = page(&build_import_summary(&status)).await;
+        let next = html.find("Tries again at").expect("next try");
+        let progress = html.find("Walking the workout history").expect("progress");
+        let finish = html.find("Finish time unknown").expect("finish");
+        assert!(next < progress && progress < finish);
+    }
+
+    #[tokio::test]
     async fn a_retry_time_that_has_passed_falls_back_to_the_next_daily_pull() {
         let failed = attempt(
             Some(AttemptOutcome::Failed(ImportFailure::ProgressUnreadable)),
@@ -322,6 +345,7 @@ mod tests {
         let (status, html) = read(render(Imports::Unavailable, now())).await;
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert!(html.contains("Import status unavailable."));
+        assert!(html.contains(r#"role="status""#));
         assert_shell(&html, Page::Imports);
         assert!(!html.contains("Not run yet"));
     }
@@ -331,6 +355,8 @@ mod tests {
         let (status, html) = read(render(Imports::NotSetUp, now())).await;
         assert_eq!(status, StatusCode::OK);
         assert!(html.contains("Garmin is not set up."));
+        assert!(html.contains(r#"role="status""#));
+        assert!(html.contains("badge--neutral\">Not set up"));
         assert!(!html.contains("Import status unavailable"));
     }
 

@@ -18,11 +18,11 @@
 </section>
 {% else if not_set_up %}
 <section>
-<p class="notice"><strong>Garmin is not set up.</strong> Add a [health_collector] section to config.toml, then log in.</p>
+<p class="notice" role="status"><span class="badge badge--neutral">Not set up</span> <strong>Garmin is not set up.</strong> Add a [health_collector] section to config.toml, then log in.</p>
 </section>
 {% else %}
 <section>
-<p class="notice notice--warn"><span class="badge badge--warn">Unavailable</span> <strong>Import status unavailable.</strong> The health collector did not respond. This page retries every minute.</p>
+<p class="notice notice--warn" role="status"><span class="badge badge--warn">Unavailable</span> <strong>Import status unavailable.</strong> The health collector did not respond. This page retries every minute.</p>
 </section>
 {% endif %}
 {% endblock %}

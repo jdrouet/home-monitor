@@ -139,9 +139,9 @@ The token values live in `crates/dashboard/assets/app.css`.
   1 px `--border` bottom edge. The nav therefore stays one tap away on long
   pages, such as Health.
 - Phone: the bar is 48 px tall. The five links share the width equally
-  (`grid-template-columns: repeat(auto-fit, minmax(min(4.5rem, 100%), 1fr))`,
-  which wraps to two rows under large text settings, and at 320 px). Links use `--text-sm`
-  600 and are centred. No brand text is shown.
+  (`grid-template-columns: repeat(5, minmax(0, 1fr))`, so the nav stays one
+  row down to 320 px). Links use `--text-sm` 600 and are centred; below 360 px
+  the font steps down to 0.8125rem so "Overview" fits in a 64 px column. No brand text is shown.
 - Desktop: "Home monitor" appears as plain text (`--text-base` 600, not a
   link) at the left, and the links follow inline, each at least 44 px tall
   with `--space-4` inline padding. The bar content is capped at `--page-max`.
@@ -292,8 +292,8 @@ padding and a minimum height of `--tap`.
 ## Rules
 
 1. Use only tokens. A raw hex value, raw px value, or extra font size in page
-   CSS is a defect. The exception is the 1 px border width and the 3 px nav
-   bar.
+   CSS is a defect. The exceptions are the 1 px border width, the 3 px nav
+   bar and the nav font below 360 px.
 2. Each view has one visual priority. Accent fill appears only on the current
    nav item, the checked segment, and the one primary button.
 3. Status is words first. Every coloured state has text, and a badge without

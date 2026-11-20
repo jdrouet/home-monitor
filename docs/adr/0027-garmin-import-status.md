@@ -99,5 +99,5 @@ change.
 - A down collector logs one alerter warning per minute and one dashboard error
   per page request.
 - The notification says "10:00" literally, so a schedule change must update it.
-- Nav width: five tabs fit at 390 px after the nav minimum goes from 5.5rem to
-  4.5rem; at 320 px the nav wraps to two rows, which the design system allows.
+- Nav width: the five tabs share the width in equal columns and stay on one
+  row down to 320 px, with a smaller font below 360 px.
