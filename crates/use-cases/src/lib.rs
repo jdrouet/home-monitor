@@ -27,6 +27,8 @@ mod health_day;
 mod health_import;
 mod health_provider;
 mod history;
+mod import_copy;
+mod import_notification;
 mod import_progress;
 mod import_window;
 mod latest_values;

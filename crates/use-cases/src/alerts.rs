@@ -3,12 +3,13 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use domain::{
-    AlertKind, AlertState, GARMIN, LoginEvent, LoginWatch, Measurement, Metric, OfflineEvent,
-    OfflineWatch, ResolvedAlert, RoomName, SourceId, TemperatureEvent, TemperatureWatch,
-    Thermometer, Timestamp,
+    AlertKind, AlertState, AttemptOutcome, GARMIN, ImportFailure, ImportJob, ImportJobStatus,
+    ImportStatus, LoginEvent, LoginWatch, Measurement, Metric, OfflineEvent, OfflineWatch,
+    ResolvedAlert, RoomName, SourceId, TemperatureEvent, TemperatureWatch, Thermometer, Timestamp,
 };
 use tracing::{error, info, warn};
 
+use crate::import_notification::import_notification;
 use crate::login_notification::login_notification;
 use crate::offline_notification::offline_notification;
 use crate::temperature_notification::temperature_notification;
@@ -107,6 +108,8 @@ pub struct Alerts {
     // Resolved alerts, oldest first.
     history: RefCell<Vec<ResolvedAlert>>,
     login: RefCell<LoginWatch>,
+    // The newest give-up notified per Garmin job, as its `retry_at`.
+    imports_notified: RefCell<BTreeMap<ImportJob, Timestamp>>,
     // Set when the last save failed; the next check saves again.
     unsaved: Cell<bool>,
 }
@@ -146,6 +149,7 @@ impl Alerts {
             sensors: RefCell::new(sensors),
             history: RefCell::new(state.history),
             login: RefCell::new(state.garmin_login.map(LoginWatch::from).unwrap_or_default()),
+            imports_notified: RefCell::new(state.garmin_imports),
             unsaved: Cell::new(false),
         }
     }
@@ -221,6 +225,51 @@ impl Alerts {
             }
         }
         self.notify_login(notifier, store, &now).await;
+    }
+
+    /// Sends one notification for each job of `status` that gave up and was
+    /// not notified yet. A give-up counts when its `retry_at` is newer than the
+    /// one last delivered for the job and still ahead, checked just before the
+    /// send. A daily pull refused for its login is left to the login alert. A
+    /// failed send is retried by the next report; a failed save by the next
+    /// check.
+    pub async fn notify_imports<N: Notifier, S: AlertStateStore, C: Fn() -> Timestamp>(
+        &self,
+        status: &ImportStatus,
+        notifier: &N,
+        store: &S,
+        now: C,
+    ) {
+        for (job, job_status) in &status.jobs {
+            let Some((failure, retry_at)) = give_up(*job, job_status) else {
+                continue;
+            };
+            if !self.import_due(*job, retry_at, now()) {
+                continue;
+            }
+            match notifier
+                .notify(&import_notification(*job, failure, retry_at))
+                .await
+            {
+                Ok(()) => {
+                    self.imports_notified.borrow_mut().insert(*job, retry_at);
+                    self.save(store, now());
+                    info!(?job, ?failure, "garmin import notification delivered");
+                }
+                Err(error) => {
+                    warn!(?job, %error, "garmin import notification failed, retrying at the next poll");
+                }
+            }
+        }
+    }
+
+    fn import_due(&self, job: ImportJob, retry_at: Timestamp, now: Timestamp) -> bool {
+        retry_at > now
+            && self
+                .imports_notified
+                .borrow()
+                .get(&job)
+                .is_none_or(|notified| retry_at > *notified)
     }
 
     async fn notify_login<N: Notifier, S: AlertStateStore, C: Fn() -> Timestamp>(
@@ -316,6 +365,7 @@ impl Alerts {
                 .cloned()
                 .collect(),
             garmin_login: self.login.borrow().state(),
+            garmin_imports: self.imports_notified.borrow().clone(),
         }
     }
 
@@ -330,6 +380,19 @@ impl Alerts {
     }
 }
 
+/// The reason and the pull a job waits for, when its latest attempt ended in a
+/// failure the owner has to hear about.
+fn give_up(job: ImportJob, status: &ImportJobStatus) -> Option<(ImportFailure, Timestamp)> {
+    let end = status.latest()?.ended?;
+    let AttemptOutcome::Failed(failure) = end.outcome else {
+        return None;
+    };
+    if (job, failure) == (ImportJob::DailyPull, ImportFailure::LoginRejected) {
+        return None;
+    }
+    Some((failure, status.retry_at?))
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::{Cell, RefCell};
@@ -340,6 +403,10 @@ mod tests {
         AlertKind, AlertState, Deviation, GARMIN, LoginState, MacAddress, Measurement, Metric,
         OfflineAlert, ResolvedAlert, RoomName, SourceId, SourceKind, TemperatureAlert,
         TemperatureRange, Thermometer, Timestamp,
+    };
+    use domain::{
+        AttemptEnd, AttemptOutcome, ImportAttempt, ImportCounts, ImportFailure, ImportJob,
+        ImportStatus,
     };
 
     use crate::{AlertStateStore, Notification, Notifier};
@@ -1299,5 +1366,196 @@ mod tests {
         check_live(&alerts, &notifier, &store, MINUTE).await;
         assert!(notifier.sent.borrow().is_empty());
         assert_eq!(alerts.state(at(MINUTE)).garmin_login, None);
+    }
+
+    fn gave_up(records: &[(ImportJob, ImportFailure, i64)]) -> ImportStatus {
+        let mut status = ImportStatus::default();
+        for (job, failure, retry_secs) in records {
+            let attempt = ImportAttempt {
+                started: at(0),
+                ended: Some(AttemptEnd {
+                    at: at(1),
+                    outcome: AttemptOutcome::Failed(*failure),
+                    counts: ImportCounts::default(),
+                }),
+            };
+            status.record(*job, attempt, at(*retry_secs));
+        }
+        status
+    }
+
+    fn workouts_gave_up(retry_secs: i64) -> ImportStatus {
+        gave_up(&[(ImportJob::Workouts, ImportFailure::GarminDown, retry_secs)])
+    }
+
+    async fn report(
+        alerts: &Alerts,
+        status: &ImportStatus,
+        notifier: &FakeNotifier<impl Fn()>,
+        store: &FakeStore,
+        now: i64,
+    ) {
+        alerts
+            .notify_imports(status, notifier, store, || at(now))
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_give_up_notifies_once_and_is_saved() {
+        let (notifier, store) = (FakeNotifier::new(), FakeStore::new());
+        let alerts = alerts(&store, 0);
+        let status = workouts_gave_up(10 * HOUR);
+        report(&alerts, &status, &notifier, &store, 0).await;
+        report(&alerts, &status, &notifier, &store, MINUTE).await;
+        assert_eq!(
+            notifier.titles(),
+            ["Garmin import stopped: Workout archive"]
+        );
+        assert!(notifier.messages()[0].contains("Garmin had a server error."));
+        let saved = store.saved.borrow();
+        assert_eq!(
+            saved.last().expect("saved").garmin_imports[&ImportJob::Workouts],
+            at(10 * HOUR)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_newer_retry_time_notifies_again_and_an_older_one_does_not() {
+        let (notifier, store) = (FakeNotifier::new(), FakeStore::new());
+        let alerts = alerts(&store, 0);
+        report(&alerts, &workouts_gave_up(10 * HOUR), &notifier, &store, 0).await;
+        report(
+            &alerts,
+            &workouts_gave_up(34 * HOUR),
+            &notifier,
+            &store,
+            11 * HOUR,
+        )
+        .await;
+        report(
+            &alerts,
+            &workouts_gave_up(20 * HOUR),
+            &notifier,
+            &store,
+            12 * HOUR,
+        )
+        .await;
+        assert_eq!(notifier.sent.borrow().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_retry_time_in_the_past_sends_nothing() {
+        let (notifier, store) = (FakeNotifier::new(), FakeStore::new());
+        let alerts = alerts(&store, 0);
+        report(
+            &alerts,
+            &workouts_gave_up(10 * HOUR),
+            &notifier,
+            &store,
+            10 * HOUR,
+        )
+        .await;
+        report(
+            &alerts,
+            &workouts_gave_up(10 * HOUR),
+            &notifier,
+            &store,
+            11 * HOUR,
+        )
+        .await;
+        assert!(notifier.sent.borrow().is_empty());
+        assert!(store.saved.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_restart_with_the_saved_state_does_not_repeat_a_give_up() {
+        let (notifier, store) = (FakeNotifier::new(), FakeStore::new());
+        let first = alerts(&store, 0);
+        let status = workouts_gave_up(10 * HOUR);
+        report(&first, &status, &notifier, &store, 0).await;
+        let restarted_store =
+            FakeStore::holding(store.saved.borrow().last().expect("saved").clone());
+        let restarted = alerts(&restarted_store, HOUR);
+        report(&restarted, &status, &notifier, &restarted_store, HOUR).await;
+        assert_eq!(notifier.sent.borrow().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn only_a_refused_login_of_the_daily_pull_is_left_to_the_login_alert() {
+        let (notifier, store) = (FakeNotifier::new(), FakeStore::new());
+        let alerts = alerts(&store, 0);
+        let refused = gave_up(&[(ImportJob::DailyPull, ImportFailure::LoginRejected, HOUR)]);
+        report(&alerts, &refused, &notifier, &store, 0).await;
+        assert!(notifier.sent.borrow().is_empty());
+        let others = gave_up(&[
+            (ImportJob::DailyPull, ImportFailure::Unreachable, HOUR),
+            (ImportJob::MissedDays, ImportFailure::LoginRejected, HOUR),
+            (
+                ImportJob::HealthHistory,
+                ImportFailure::ProgressUnreadable,
+                HOUR,
+            ),
+        ]);
+        report(&alerts, &others, &notifier, &store, 0).await;
+        assert_eq!(notifier.sent.borrow().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn running_paused_and_done_jobs_send_nothing() {
+        let (notifier, store) = (FakeNotifier::new(), FakeStore::new());
+        let alerts = alerts(&store, 0);
+        let mut status = ImportStatus::default();
+        let running = ImportAttempt {
+            started: at(0),
+            ended: None,
+        };
+        status.record(ImportJob::Workouts, running, at(HOUR));
+        for (job, outcome) in [
+            (ImportJob::MissedDays, AttemptOutcome::Paused),
+            (ImportJob::DailyArchive, AttemptOutcome::Done),
+        ] {
+            let ended = ImportAttempt {
+                started: at(0),
+                ended: Some(AttemptEnd {
+                    at: at(1),
+                    outcome,
+                    counts: ImportCounts::default(),
+                }),
+            };
+            status.record(job, ended, at(HOUR));
+        }
+        report(&alerts, &status, &notifier, &store, 0).await;
+        assert!(notifier.sent.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_failed_send_is_retried_by_the_next_report() {
+        let (notifier, store) = (FakeNotifier::failing(1), FakeStore::new());
+        let alerts = alerts(&store, 0);
+        let status = workouts_gave_up(10 * HOUR);
+        report(&alerts, &status, &notifier, &store, 0).await;
+        assert!(notifier.sent.borrow().is_empty());
+        assert!(store.saved.borrow().is_empty());
+        report(&alerts, &status, &notifier, &store, MINUTE).await;
+        assert_eq!(notifier.sent.borrow().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_retry_time_that_passes_while_an_earlier_send_runs_is_not_sent() {
+        let clock = Cell::new(0);
+        let notifier = FakeNotifier::with_hook(|| clock.set(2 * HOUR));
+        let store = FakeStore::new();
+        let alerts = alerts(&store, 0);
+        let status = gave_up(&[
+            (ImportJob::MissedDays, ImportFailure::GarminDown, HOUR),
+            (ImportJob::Workouts, ImportFailure::GarminDown, HOUR),
+        ]);
+        alerts
+            .notify_imports(&status, &notifier, &store, || at(clock.get()))
+            .await;
+        assert_eq!(
+            notifier.titles(),
+            ["Garmin import stopped: Missed days (last 30)"]
+        );
     }
 }

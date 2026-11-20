@@ -35,9 +35,12 @@ dependencies = [
  "domain",
  "mqtt",
  "ntfy",
+ "reqwest",
  "state-file",
+ "thiserror",
  "tokio",
  "tower",
+ "tracing",
  "tracing-subscriber",
  "use-cases",
 ]
@@ -3674,6 +3677,7 @@ version = "0.1.0"
 dependencies = [
  "bthome",
  "chrono",
+ "chrono-tz",
  "domain",
  "tokio",
  "tracing",
