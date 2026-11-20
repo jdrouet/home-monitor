@@ -17,3 +17,10 @@ pub struct ImportJobStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eta: Option<ImportEta>,
 }
+
+impl ImportJobStatus {
+    /// Retries that ran in the current window: every attempt after the first.
+    pub fn retries(&self) -> usize {
+        self.attempts.len().saturating_sub(1)
+    }
+}

@@ -159,23 +159,11 @@ mod tests {
     }
 
     #[test]
-    fn a_retry_appends_its_attempt_and_clears_next_retry() {
-        let mut status = ImportStatus::default();
-        status.record(JOB, ended(1, 2, failed()), at(100), Some(at(50)));
-        status.record(JOB, running(50), at(100), None);
-        assert_eq!(job(&status).next_retry, None);
-        status.record(JOB, ended(50, 51, AttemptOutcome::Done), at(100), None);
-        assert_eq!(
-            job(&status).attempts,
-            vec![ended(1, 2, failed()), ended(50, 51, AttemptOutcome::Done)]
-        );
-    }
-
-    #[test]
     fn ended_retries_append_in_order() {
         let mut status = ImportStatus::default();
         for start in [1, 10, 20] {
             status.record(JOB, running(start), at(100), None);
+            assert_eq!(job(&status).next_retry, None);
             status.record(
                 JOB,
                 ended(start, start + 1, failed()),

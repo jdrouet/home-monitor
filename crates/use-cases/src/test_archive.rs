@@ -1,6 +1,6 @@
 //! In-memory stand-ins for the archive ports, shared by the runner tests.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::io;
 use std::sync::Mutex;
@@ -31,17 +31,13 @@ pub(crate) const START: i64 = 1_000_000_000_000_000;
 
 /// The instant `window` after the start of the test clock.
 pub(crate) fn after(window: Duration) -> Timestamp {
-    let micros = i64::try_from(window.as_micros()).expect("fits");
-    Timestamp::from_micros(START + micros)
+    Timestamp::from_micros(START).saturating_add(window)
 }
 
 /// A clock that starts at `START` and follows the tokio clock.
 pub(crate) fn clock() -> impl Fn() -> Timestamp {
     let start = Instant::now();
-    move || {
-        let elapsed = i64::try_from(start.elapsed().as_micros()).expect("fits");
-        Timestamp::from_micros(START + elapsed)
-    }
+    move || Timestamp::from_micros(START).saturating_add(start.elapsed())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,7 +193,7 @@ pub(crate) struct MemoryArchive {
     pub contains_fails: bool,
     pub put_fails: bool,
     pub(crate) entries: Mutex<HashMap<String, Stored>>,
-    pub(crate) writes: Mutex<HashMap<String, usize>>,
+    pub(crate) puts: Mutex<usize>,
 }
 
 impl MemoryArchive {
@@ -215,9 +211,13 @@ impl MemoryArchive {
             .expect("seeding does not fail");
     }
 
-    /// How many times each key was written.
-    pub(crate) fn writes(&self) -> HashMap<String, usize> {
-        self.writes.lock().expect("lock").clone()
+    /// How many writes succeeded; equal to `count()` when no key was written twice.
+    pub(crate) fn puts(&self) -> usize {
+        *self.puts.lock().expect("lock")
+    }
+
+    pub(crate) fn keys(&self) -> HashSet<String> {
+        self.entries.lock().expect("lock").keys().cloned().collect()
     }
 
     pub(crate) fn count(&self) -> usize {
@@ -228,12 +228,7 @@ impl MemoryArchive {
         if self.put_fails {
             return Err(io::Error::other("disk full"));
         }
-        *self
-            .writes
-            .lock()
-            .expect("lock")
-            .entry(format!("{key:?}"))
-            .or_default() += 1;
+        *self.puts.lock().expect("lock") += 1;
         self.entries
             .lock()
             .expect("lock")

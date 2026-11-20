@@ -159,7 +159,7 @@ async fn tracked(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::{BTreeSet, HashMap, HashSet};
     use std::io;
     use std::sync::Mutex;
     use std::time::Duration;
@@ -235,10 +235,6 @@ mod tests {
 
     fn dated(date: NaiveDate) -> Timestamp {
         Timestamp::from_micros(i64::from(date.num_days_from_ce()))
-    }
-
-    fn plus(at: Timestamp, span: Duration) -> Timestamp {
-        Timestamp::from_micros(at.as_micros() + i64::try_from(span.as_micros()).expect("fits"))
     }
 
     async fn run_until(
@@ -386,10 +382,6 @@ mod tests {
             format!("{:?}", ArchiveKey::Activity { activity, file })
         })
         .collect()
-    }
-
-    fn written(archive: &MemoryArchive) -> HashSet<String> {
-        archive.writes().keys().cloned().collect()
     }
 
     fn activities(count: u64) -> Mutex<Vec<ActivityRef>> {
@@ -569,7 +561,10 @@ mod tests {
         );
         assert_eq!((ends.len(), starts.len()), (4, 4));
         for (k, minutes) in [5, 15, 60].into_iter().enumerate() {
-            let retry = plus(ends[k].0.at, Duration::from_secs(minutes * 60));
+            let retry = ends[k]
+                .0
+                .at
+                .saturating_add(Duration::from_secs(minutes * 60));
             assert_eq!(ends[k].1, Some(retry));
             assert_eq!(starts[k + 1], retry);
         }
@@ -663,7 +658,7 @@ mod tests {
             } else {
                 Duration::ZERO
             };
-            plus(Timestamp::from_micros(START), elapsed + skew)
+            Timestamp::from_micros(START).saturating_add(elapsed + skew)
         };
         let records = run_until(
             &source,
@@ -737,10 +732,9 @@ mod tests {
         for (key, times) in &asked {
             assert_eq!(*times, if *key == failed_key { 2 } else { 1 }, "{key}");
         }
-        let writes = archive.writes();
         assert_eq!(archive.count(), 365 * 2);
-        assert!(writes.values().all(|times| *times == 1));
-        assert_eq!(written(&archive), day_keys());
+        assert_eq!(archive.puts(), archive.count());
+        assert_eq!(archive.keys(), day_keys());
         assert!(stores.archive.stored().expect("archive cursor").is_done());
     }
 
@@ -763,9 +757,9 @@ mod tests {
         assert_eq!(ends.len(), 2);
         assert_eq!(ends[0].0.outcome, failed(ImportFailure::BadAnswer));
         assert_eq!(ends[1].0.outcome, AttemptOutcome::Done);
-        assert!(archive.writes().values().all(|times| *times == 1));
+        assert_eq!(archive.puts(), archive.count());
         let expected = activity_keys((1..=10).flat_map(|id| [(id, "x.json"), (id, "y.json")]));
-        assert_eq!(written(&archive), &expected | &day_keys());
+        assert_eq!(archive.keys(), &expected | &day_keys());
         let saved = stores.activities.saves();
         assert!(saved.iter().any(|cursor| cursor.start == 5 && !cursor.done));
         assert!(stores.activities.stored().expect("activity cursor").done);
@@ -825,8 +819,8 @@ mod tests {
                 .chain([(7, "x.json")])
                 .take(13),
         );
-        assert_eq!(written(&archive), expected);
-        assert!(archive.writes().values().all(|times| *times == 1));
+        assert_eq!(archive.keys(), expected);
+        assert_eq!(archive.puts(), archive.count());
     }
 
     #[tokio::test(start_paused = true)]
@@ -878,7 +872,10 @@ mod tests {
         let workouts = ends(&records, ImportJob::Workouts);
         assert_eq!(workouts.len(), 4);
         for (k, minutes) in [5, 15, 60].into_iter().enumerate() {
-            let retry = plus(workouts[k].0.at, Duration::from_secs(minutes * 60));
+            let retry = workouts[k]
+                .0
+                .at
+                .saturating_add(Duration::from_secs(minutes * 60));
             assert_eq!(workouts[k].1, Some(retry));
         }
         assert_eq!(workouts[3].1, None);
@@ -918,15 +915,11 @@ mod tests {
     }
 
     fn assert_each_once(days: &[NaiveDate], stamps: &[Timestamp], expected: usize) {
-        let mut unique = days.to_vec();
-        unique.sort();
-        unique.dedup();
+        let unique: BTreeSet<_> = days.iter().copied().collect();
         assert_eq!((days.len(), unique.len()), (expected, expected));
-        let mut published = stamps.to_vec();
-        published.sort();
-        published.dedup();
+        let published: BTreeSet<_> = stamps.iter().copied().collect();
         assert_eq!((stamps.len(), published.len()), (expected, expected));
-        let wanted: Vec<_> = unique.into_iter().map(dated).collect();
+        let wanted: BTreeSet<_> = unique.into_iter().map(dated).collect();
         assert_eq!(published, wanted);
     }
 

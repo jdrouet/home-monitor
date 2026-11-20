@@ -1,7 +1,7 @@
 use domain::{ImportFailure, ImportJob};
 
 use crate::Notification;
-use crate::import_copy::{failure_text, job_name};
+use crate::import_copy::{failure_text, job_name, retries_failed_text};
 
 /// The give-up of `job` after `retries` failed retries, which tries again at
 /// the time `when` names.
@@ -11,10 +11,10 @@ pub(crate) fn import_notification(
     retries: usize,
     when: &str,
 ) -> Notification {
-    let retried = match retries {
-        0 => String::new(),
-        1 => " It retried once.".to_owned(),
-        n => format!(" It retried {n} times."),
+    let retried = if retries == 0 {
+        String::new()
+    } else {
+        format!(" {}", retries_failed_text(retries))
     };
     Notification {
         title: format!("Garmin import stopped: {}", job_name(job)),
@@ -59,11 +59,11 @@ mod tests {
         };
         assert_eq!(
             message(1),
-            "Garmin had a server error. It retried once. It tries again at the next daily pull, 10:00."
+            "Garmin had a server error. 1 retry failed. It tries again at the next daily pull, 10:00."
         );
         assert_eq!(
             message(3),
-            "Garmin had a server error. It retried 3 times. It tries again at the next daily pull, 10:00."
+            "Garmin had a server error. 3 retries failed. It tries again at the next daily pull, 10:00."
         );
     }
 }

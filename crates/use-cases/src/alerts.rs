@@ -391,11 +391,7 @@ fn give_up(job: ImportJob, status: &ImportJobStatus) -> Option<(ImportFailure, T
     {
         return None;
     }
-    Some((
-        failure,
-        status.retry_at?,
-        status.attempts.len().saturating_sub(1),
-    ))
+    Some((failure, status.retry_at?, status.retries()))
 }
 
 #[cfg(test)]
@@ -1548,7 +1544,7 @@ mod tests {
             report(&alerts, &status, &notifier, &store, poll * MINUTE).await;
         }
         assert_eq!(notifier.sent.borrow().len(), 1);
-        assert!(notifier.messages()[0].contains("It retried 3 times."));
+        assert!(notifier.messages()[0].contains("3 retries failed."));
     }
 
     #[tokio::test]
@@ -1599,7 +1595,7 @@ mod tests {
         report(&restarted, &status, &notifier, &store, 7 * MINUTE).await;
         report(&restarted, &status, &notifier, &store, 8 * MINUTE).await;
         assert_eq!(notifier.sent.borrow().len(), 1);
-        assert!(notifier.messages()[0].contains("It retried once."));
+        assert!(notifier.messages()[0].contains("1 retry failed."));
     }
 
     #[tokio::test]

@@ -11,6 +11,14 @@ pub fn job_name(job: ImportJob) -> &'static str {
     }
 }
 
+/// How many retries of a window failed; `retries` is at least 1.
+pub fn retries_failed_text(retries: usize) -> String {
+    match retries {
+        1 => "1 retry failed.".to_owned(),
+        n => format!("{n} retries failed."),
+    }
+}
+
 /// The reason shown to the owner when a job stopped.
 pub fn failure_text(failure: ImportFailure) -> &'static str {
     match failure {

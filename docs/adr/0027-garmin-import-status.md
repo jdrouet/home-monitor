@@ -35,45 +35,35 @@ define the jobs and the chain that runs after each daily pull.
   The URL is parsed at startup, so a malformed value stops the alerter
   (ADR-0012). A failed poll logs a category only and affects nothing but the
   import notification. Delivery, retry and saving follow ADR-0017 and ADR-0019.
-- Retries (#44). A chained job that stops because Garmin did not answer
-  (`Unreachable`), had a server error (`GarminDown`) or answered badly
-  (`BadAnswer`: other non-session 4xx, truncated or undecodable bodies) is
-  retried. A rate-limit answer (427, 429) is not a bad answer: Garmin asked the
-  client to slow down, and retrying at 5 and 15 minutes could lengthen the block.
-  The other reasons wait for the next pull because a retry fails the same way
-  and needs the owner: `LoginRejected`, `LoginFileUnreadable`,
-  `ArchiveUnavailable`, `ProgressUnreadable` (a skip), `ProgressNotSaved` (local
-  disk) and `PublishFailed` (not a Garmin failure; the client reconnects and the
-  next window resumes from the cursor). The classification is an exhaustive
-  match, so a new reason must be classified.
-  - Schedule: retries start 5, 15 and 60 minutes after the failed attempt
-    ends. The budget is 3 per job per window, so each chained job has its own.
-    After the third failed retry the job gives up until the next pull.
-  - Guard: a retry is planned only when a step started at its time still fits,
-    that is at least 6 minutes (the 60 s step spacing plus the 5 min margin)
-    before the next pull. The cutoff limits when steps start, not when they
-    finish: no step is admitted inside the margin, a late wake from a backoff
-    starts nothing and ends paused, and an admitted slow step may finish past
-    the margin, after which the runner admits no further step.
-  - A retry re-runs only the failed job, in a new session, through the same
-    paced adapter. Then the chain goes on with the next job, which gets its
-    first attempt. Earlier jobs are not re-run. A job that gives up ends the
-    chain as before. The loop lives in use-cases with an injected clock.
-  - A catch-up page cap (ten completed pages) applies per attempt, so a retry
-    gets ten pages of its own. Resuming repeats no stored work: runners resume
-    from their cursors, the archive checks for a key before every fetch, and a
-    repeated health day has the same stamp (ADR-0015).
+- Retries (#44). A chained job that stops because Garmin did not answer, had a
+  server error or answered badly (an unusable body or another non-session 4xx)
+  is retried. A rate-limit answer (427, 429) is not a bad answer: Garmin asked
+  the client to slow down, and retrying could lengthen the block. Login, disk,
+  unreadable or unsaved progress and publish failures wait for the next pull: a
+  retry would fail the same way, or the cause is not Garmin's. A new failure
+  reason must be classified explicitly.
+  - Retries start 5, 15 and 60 minutes after the failed attempt ends, 3 per job
+    per window, so each chained job has its own budget. After the third failed
+    retry the job gives up until the next pull. A catch-up page cap applies
+    per attempt.
+  - A retry is planned only when at least 6 minutes (one step plus the margin)
+    remain before the next pull. The cutoff limits when steps start, not when
+    they finish: no step is admitted inside the margin, and an admitted slow step
+    may finish past it.
+  - A retry re-runs only the failed job, in a new session through the same paced
+    adapter, then the chain goes on with the next job. Resuming repeats no
+    stored work (cursors, archive checks, same-stamp health days; ADR-0015).
   - The 10:00 daily pull is not retried. A failed pull leaves yesterday owed to
     the gap fill at the next completed pull, the startup pull already covers
     restarts, and a retried pull would publish `session_valid` again at another
     stamp, which changes the login alert's input (ADR-0024).
-  - The retry budget and wake time are in memory like the other records. A
-    collector restart starts a fresh run with a fresh budget. This is accepted:
-    restarts are rare and operator-driven, and the pacer still applies.
-  - A health day skipped inside the missed days or the history, on a transport
-    error, a 5xx or a malformed day, keeps the ADR-0023 behaviour: skipped and
-    logged. It can remain missing, because the gap fill does not generally
-    revisit it apart from its rule for yesterday. A follow-up is suggested.
+  - The retry budget and wake time are in memory. A collector restart starts a
+    fresh budget; this is accepted because restarts are rare and operator-driven,
+    and the pacer still applies.
+  - A health day skipped on a transport error, a 5xx or a malformed day keeps the
+    ADR-0023 behaviour: skipped and logged. It can remain missing, because the
+    gap fill does not generally revisit it apart from its rule for yesterday. A
+    follow-up is suggested.
 - A give-up is a job that stops and waits for the next scheduled pull, after
   any retries:
   the daily pull ending throttled, session-failed or failed, or a chained job

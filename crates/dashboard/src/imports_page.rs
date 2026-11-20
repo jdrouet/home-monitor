@@ -2,7 +2,10 @@ use askama::Template;
 use axum::http::StatusCode;
 use axum::response::Response;
 use domain::{ImportEta, Timestamp};
-use use_cases::{ImportLine, ImportState, ImportSummary, MAX_RETRIES, job_name, no_counts_text};
+use use_cases::{
+    ImportLine, ImportState, ImportSummary, MAX_RETRIES, job_name, no_counts_text,
+    retries_failed_text,
+};
 
 use crate::page::{self, Page};
 use crate::paris_time::{paris_day, paris_hour_minute, paris_time};
@@ -83,19 +86,18 @@ fn card(line: &ImportLine, next_pull: Option<Timestamp>, now: Timestamp) -> Card
             "Catching up",
             format!("Paused at {}: {counts}.", when(line.ended)),
         ),
-        ImportState::Failed | ImportState::Retrying => (
-            if line.state == ImportState::Failed {
-                "Failed"
-            } else {
-                "Retrying"
-            },
+        ImportState::Failed => (
+            "Failed",
             format!(
-                "{} at {}: {}",
-                if line.state == ImportState::Failed {
-                    "Failed"
-                } else {
-                    "Last try failed"
-                },
+                "Failed at {}: {}",
+                when(line.ended),
+                line.failure.unwrap_or("")
+            ),
+        ),
+        ImportState::Retrying => (
+            "Retrying",
+            format!(
+                "Last try failed at {}: {}",
                 when(line.ended),
                 line.failure.unwrap_or("")
             ),
@@ -164,8 +166,7 @@ fn retry_text(line: &ImportLine) -> Option<String> {
         ImportState::Worked => format!("Worked on retry {retries}."),
         ImportState::Partial => format!("Partly worked on retry {retries}."),
         ImportState::CatchingUp => format!("Catching up after retry {retries}."),
-        ImportState::Failed if retries == 1 => "The retry failed.".to_owned(),
-        ImportState::Failed => format!("{retries} retries failed."),
+        ImportState::Failed => retries_failed_text(retries),
         ImportState::NotRun | ImportState::Retrying => return None,
     })
 }
@@ -482,7 +483,7 @@ mod tests {
             (try_at(11, Some(down()), ImportCounts::default()), None),
         ])
         .await;
-        assert!(html.contains("The retry failed."));
+        assert!(html.contains("1 retry failed."));
     }
 
     #[tokio::test]

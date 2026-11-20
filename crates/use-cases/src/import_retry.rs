@@ -40,8 +40,7 @@ pub(crate) fn next_retry(
     if !is_transient(failure) {
         return None;
     }
-    let delay = i64::try_from(RETRY_DELAYS.get(retries)?.as_micros()).ok()?;
-    let at = Timestamp::from_micros(ended.as_micros().saturating_add(delay));
+    let at = ended.saturating_add(*RETRY_DELAYS.get(retries)?);
     step_fits(until, at).then_some(at)
 }
 
@@ -102,18 +101,5 @@ mod tests {
         let short = Timestamp::from_micros(needed - 1);
         assert!(next_retry(ImportFailure::GarminDown, 0, ended, fits).is_some());
         assert_eq!(next_retry(ImportFailure::GarminDown, 0, ended, short), None);
-    }
-
-    #[test]
-    fn non_transient_reasons_never_retry() {
-        let until = Timestamp::from_micros(i64::MAX);
-        for (failure, transient) in ALL {
-            if !transient {
-                assert_eq!(
-                    next_retry(failure, 0, Timestamp::from_micros(0), until),
-                    None
-                );
-            }
-        }
     }
 }

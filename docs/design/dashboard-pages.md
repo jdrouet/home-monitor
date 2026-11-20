@@ -289,7 +289,7 @@ The retry line comes next, or first on every other card:
   in `--text` rather than muted (`.secondary--now`), as the one line to read.
   Running: "Retry {n} of 3." Done: "Worked on retry {n}." Partial: "Partly worked
   on retry {n}." Paused or capped: "Catching up after retry {n}." Gave up:
-  "The retry failed." for one retry, else "{n} retries failed."
+  "1 retry failed." or "{n} retries failed."
 - Progress. Days with left > 0: "Up to {done_through} · {left} days left".
   Days with left 0: "Complete up to {done_through}". Workouts incomplete:
   "Walking the workout history". Workouts complete: "Workout history complete".
