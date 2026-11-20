@@ -185,7 +185,7 @@ async fn pull_once<
     let days = pull_days(started);
     jobs.send_modify(|status| status.next_pull = Some(next));
     let record = |job: ImportJob, attempt: ImportAttempt| {
-        jobs.send_modify(|status| status.record(job, attempt, next));
+        jobs.send_modify(|status| status.record(job, attempt, next, None));
     };
     record(
         ImportJob::DailyPull,
@@ -396,7 +396,9 @@ mod tests {
             ended: None,
         };
         let earlier_deadline = at("2026-01-15T09:00:00Z");
-        jobs.send_modify(|status| status.record(ImportJob::Workouts, earlier, earlier_deadline));
+        jobs.send_modify(|status| {
+            status.record(ImportJob::Workouts, earlier, earlier_deadline, None)
+        });
         let before = jobs.borrow().jobs[&ImportJob::Workouts].clone();
         let started = at("2026-01-15T09:00:00Z");
         let next = pull(&jobs, started, after(started, 1)).await;

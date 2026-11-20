@@ -246,7 +246,7 @@ fn import_status(
         ..ImportStatus::default()
     };
     for (job, attempt) in records {
-        status.record(*job, *attempt, next_pull);
+        status.record(*job, *attempt, next_pull, None);
     }
     for (job, progress, eta) in extras {
         let entry = status.jobs.entry(*job).or_default();

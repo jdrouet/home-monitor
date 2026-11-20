@@ -106,7 +106,7 @@ mod tests {
 
     fn summary_of(job: ImportJob, attempt: ImportAttempt) -> super::ImportLine {
         let mut status = ImportStatus::default();
-        status.record(job, attempt, at(100));
+        status.record(job, attempt, at(100), None);
         build_import_summary(&status)
             .lines
             .into_iter()

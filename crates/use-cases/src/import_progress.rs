@@ -283,9 +283,14 @@ mod tests {
             next_pull: Some(at(DAY.as_secs().try_into().expect("small"))),
             ..ImportStatus::default()
         };
-        jobs.record(ImportJob::DailyPull, ended(0, AttemptOutcome::Done), at(0));
+        jobs.record(
+            ImportJob::DailyPull,
+            ended(0, AttemptOutcome::Done),
+            at(0),
+            None,
+        );
         for (job, attempt) in records {
-            jobs.record(*job, *attempt, at(0));
+            jobs.record(*job, *attempt, at(0), None);
         }
         jobs
     }

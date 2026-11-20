@@ -1382,7 +1382,7 @@ mod tests {
                     counts: ImportCounts::default(),
                 }),
             };
-            status.record(*job, attempt, at(*retry_secs));
+            status.record(*job, attempt, at(*retry_secs), None);
         }
         status
     }
@@ -1513,7 +1513,7 @@ mod tests {
             started: at(0),
             ended: None,
         };
-        status.record(ImportJob::Workouts, running, at(HOUR));
+        status.record(ImportJob::Workouts, running, at(HOUR), None);
         for (job, outcome) in [
             (ImportJob::MissedDays, AttemptOutcome::Paused),
             (ImportJob::DailyArchive, AttemptOutcome::Done),
@@ -1526,7 +1526,7 @@ mod tests {
                     counts: ImportCounts::default(),
                 }),
             };
-            status.record(job, ended, at(HOUR));
+            status.record(job, ended, at(HOUR), None);
         }
         report(&alerts, &status, &notifier, &store, 0).await;
         assert!(notifier.sent.borrow().is_empty());

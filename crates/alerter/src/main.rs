@@ -284,7 +284,7 @@ mod tests {
             }),
         };
         let mut status = ImportStatus::default();
-        status.record(ImportJob::Workouts, attempt, retry_at);
+        status.record(ImportJob::Workouts, attempt, retry_at, None);
         import_report::encode(&status)
     }
 

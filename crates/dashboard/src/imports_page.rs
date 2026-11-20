@@ -188,7 +188,7 @@ mod tests {
             ..ImportStatus::default()
         };
         for (job, attempt) in records {
-            status.record(*job, *attempt, at(retry_at));
+            status.record(*job, *attempt, at(retry_at), None);
         }
         build_import_summary(&status)
     }
@@ -270,7 +270,12 @@ mod tests {
             next_pull: Some(at("2026-01-16T09:00:00Z")),
             ..ImportStatus::default()
         };
-        status.record(ImportJob::Workouts, failed, at("2026-01-16T09:00:00Z"));
+        status.record(
+            ImportJob::Workouts,
+            failed,
+            at("2026-01-16T09:00:00Z"),
+            None,
+        );
         let job = status.jobs.entry(ImportJob::Workouts).or_default();
         job.progress = Some(ImportProgress::Workouts { complete: false });
         job.eta = Some(ImportEta::Unknown);
