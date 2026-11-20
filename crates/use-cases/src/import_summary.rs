@@ -1,4 +1,6 @@
-use domain::{AttemptOutcome, ImportEta, ImportJob, ImportJobStatus, ImportStatus, Timestamp};
+use domain::{
+    AttemptOutcome, ImportCounts, ImportEta, ImportJob, ImportJobStatus, ImportStatus, Timestamp,
+};
 
 use crate::import_copy::{counts_text, failure_text, progress_text};
 
@@ -13,6 +15,8 @@ pub enum ImportState {
     Partial,
     /// The latest attempt ran out of time and continues after the next pull.
     CatchingUp,
+    /// The latest attempt failed and a retry is planned.
+    Retrying,
     Failed,
 }
 
@@ -27,8 +31,12 @@ pub struct ImportLine {
     pub failure: Option<&'static str>,
     pub progress: Option<String>,
     pub eta: Option<ImportEta>,
-    /// The scheduled pull a failed job waits for.
+    /// The scheduled pull a job that gave up waits for.
     pub retry_at: Option<Timestamp>,
+    /// Retries that ran before the latest attempt in this window.
+    pub retries: usize,
+    /// The instant of a planned retry.
+    pub next_retry: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,14 +59,15 @@ pub fn build_import_summary(status: &ImportStatus) -> ImportSummary {
 fn line(job: ImportJob, status: Option<&ImportJobStatus>) -> ImportLine {
     let latest = status.and_then(|status| status.attempts.last());
     let end = latest.and_then(|attempt| attempt.ended);
+    let next_retry = status.and_then(|status| status.next_retry);
+    let counts = window_counts(status);
     let state = match end.map(|end| end.outcome) {
         _ if latest.is_none() => ImportState::NotRun,
         None => ImportState::Running,
-        Some(AttemptOutcome::Done) if end.is_some_and(|end| end.counts.failed > 0) => {
-            ImportState::Partial
-        }
+        Some(AttemptOutcome::Done) if counts.failed > 0 => ImportState::Partial,
         Some(AttemptOutcome::Done) => ImportState::Worked,
         Some(AttemptOutcome::Paused | AttemptOutcome::Capped) => ImportState::CatchingUp,
+        Some(AttemptOutcome::Failed(_)) if next_retry.is_some() => ImportState::Retrying,
         Some(AttemptOutcome::Failed(_)) => ImportState::Failed,
     };
     ImportLine {
@@ -66,7 +75,7 @@ fn line(job: ImportJob, status: Option<&ImportJobStatus>) -> ImportLine {
         state,
         started: latest.map(|attempt| attempt.started),
         ended: end.map(|end| end.at),
-        counts: end.and_then(|end| counts_text(job, end.counts)),
+        counts: end.and_then(|_| counts_text(job, counts)),
         failure: match end.map(|end| end.outcome) {
             Some(AttemptOutcome::Failed(reason)) => Some(failure_text(reason)),
             _ => None,
@@ -74,7 +83,23 @@ fn line(job: ImportJob, status: Option<&ImportJobStatus>) -> ImportLine {
         progress: status.and_then(|status| status.progress).map(progress_text),
         eta: status.and_then(|status| status.eta),
         retry_at: status.and_then(|status| status.retry_at),
+        retries: status.map_or(0, ImportJobStatus::retries),
+        next_retry,
     }
+}
+
+/// What every ended attempt of the window did, so a day skipped before a
+/// retry is not forgotten when the retry is clean.
+fn window_counts(status: Option<&ImportJobStatus>) -> ImportCounts {
+    status
+        .into_iter()
+        .flat_map(|status| &status.attempts)
+        .filter_map(|attempt| attempt.ended)
+        .fold(ImportCounts::default(), |sum, end| ImportCounts {
+            stored: sum.stored + end.counts.stored,
+            empty: sum.empty + end.counts.empty,
+            failed: sum.failed + end.counts.failed,
+        })
 }
 
 #[cfg(test)]
@@ -93,11 +118,11 @@ mod tests {
         Timestamp::from_micros(micros)
     }
 
-    fn ended(outcome: AttemptOutcome, counts: ImportCounts) -> ImportAttempt {
+    fn ended(started: i64, outcome: AttemptOutcome, counts: ImportCounts) -> ImportAttempt {
         ImportAttempt {
-            started: at(1),
+            started: at(started),
             ended: Some(AttemptEnd {
-                at: at(2),
+                at: at(started + 1),
                 outcome,
                 counts,
             }),
@@ -106,7 +131,7 @@ mod tests {
 
     fn summary_of(job: ImportJob, attempt: ImportAttempt) -> super::ImportLine {
         let mut status = ImportStatus::default();
-        status.record(job, attempt, at(100));
+        status.record(job, attempt, at(100), None);
         build_import_summary(&status)
             .lines
             .into_iter()
@@ -139,12 +164,16 @@ mod tests {
             (line.state, line.started, line.ended),
             (ImportState::Running, Some(at(1)), None)
         );
-        let done = summary_of(ImportJob::Workouts, ended(AttemptOutcome::Done, stored(3)));
+        let done = summary_of(
+            ImportJob::Workouts,
+            ended(1, AttemptOutcome::Done, stored(3)),
+        );
         assert_eq!(done.state, ImportState::Worked);
         assert_eq!(done.counts.as_deref(), Some("3 new workouts archived"));
         let partial = summary_of(
             ImportJob::MissedDays,
             ended(
+                1,
                 AttemptOutcome::Done,
                 ImportCounts {
                     stored: 1,
@@ -157,7 +186,7 @@ mod tests {
         assert_eq!(partial.counts.as_deref(), Some("1 stored, 2 skipped"));
         let paused = summary_of(
             ImportJob::HealthHistory,
-            ended(AttemptOutcome::Paused, stored(9)),
+            ended(1, AttemptOutcome::Paused, stored(9)),
         );
         assert_eq!(paused.state, ImportState::CatchingUp);
         assert_eq!(paused.ended, Some(at(2)));
@@ -166,12 +195,15 @@ mod tests {
     #[test]
     fn a_failure_carries_its_reason_counts_and_retry_time() {
         let failed = AttemptOutcome::Failed(ImportFailure::GarminDown);
-        let line = summary_of(ImportJob::Workouts, ended(failed, stored(2)));
+        let line = summary_of(ImportJob::Workouts, ended(1, failed, stored(2)));
         assert_eq!(line.state, ImportState::Failed);
         assert_eq!(line.failure, Some("Garmin had a server error."));
         assert_eq!(line.retry_at, Some(at(100)));
         assert!(line.counts.is_some());
-        let quiet = summary_of(ImportJob::Workouts, ended(failed, ImportCounts::default()));
+        let quiet = summary_of(
+            ImportJob::Workouts,
+            ended(1, failed, ImportCounts::default()),
+        );
         assert_eq!(quiet.counts, None);
     }
 
@@ -196,5 +228,89 @@ mod tests {
         assert_eq!(line.eta, Some(ImportEta::ImportDays { days: 2 }));
         assert_eq!(line.state, ImportState::NotRun);
         assert_eq!(summary.next_pull, Some(at(7)));
+    }
+
+    #[test]
+    fn a_planned_retry_is_retrying_with_its_count() {
+        let failed = AttemptOutcome::Failed(ImportFailure::GarminDown);
+        let mut status = ImportStatus::default();
+        status.record(
+            ImportJob::Workouts,
+            ended(1, failed, ImportCounts::default()),
+            at(100),
+            Some(at(50)),
+        );
+        let line = build_import_summary(&status).lines.remove(3);
+        assert_eq!(line.state, ImportState::Retrying);
+        assert_eq!((line.retries, line.next_retry), (0, Some(at(50))));
+        assert_eq!(line.failure, Some("Garmin had a server error."));
+        assert_eq!(line.retry_at, None);
+    }
+
+    #[test]
+    fn a_success_on_retry_2_is_worked_with_two_retries() {
+        let failed = AttemptOutcome::Failed(ImportFailure::Unreachable);
+        let mut status = ImportStatus::default();
+        for (started, outcome, retry) in [
+            (1, failed, Some(at(50))),
+            (50, failed, Some(at(90))),
+            (90, AttemptOutcome::Done, None),
+        ] {
+            status.record(
+                ImportJob::Workouts,
+                ended(started, outcome, ImportCounts::default()),
+                at(100),
+                retry,
+            );
+        }
+        let line = build_import_summary(&status).lines.remove(3);
+        assert_eq!((line.state, line.retries), (ImportState::Worked, 2));
+    }
+
+    #[test]
+    fn a_day_skipped_before_a_clean_retry_keeps_the_job_partial() {
+        let skipped = ImportCounts {
+            stored: 2,
+            failed: 1,
+            ..ImportCounts::default()
+        };
+        let mut status = ImportStatus::default();
+        status.record(
+            ImportJob::MissedDays,
+            ended(
+                1,
+                AttemptOutcome::Failed(ImportFailure::Unreachable),
+                skipped,
+            ),
+            at(100),
+            Some(at(50)),
+        );
+        status.record(
+            ImportJob::MissedDays,
+            ended(50, AttemptOutcome::Done, stored(3)),
+            at(100),
+            None,
+        );
+        let line = build_import_summary(&status).lines.remove(1);
+        assert_eq!(line.state, ImportState::Partial);
+        assert_eq!(line.counts.as_deref(), Some("5 stored, 1 skipped"));
+    }
+
+    #[test]
+    fn a_give_up_after_retries_is_failed_with_three_retries() {
+        let failed = AttemptOutcome::Failed(ImportFailure::GarminDown);
+        let mut status = ImportStatus::default();
+        for (started, retry) in [
+            (1, Some(at(10))),
+            (10, Some(at(20))),
+            (20, Some(at(30))),
+            (30, None),
+        ] {
+            let attempt = ended(started, failed, ImportCounts::default());
+            status.record(ImportJob::Workouts, attempt, at(100), retry);
+        }
+        let line = build_import_summary(&status).lines.remove(3);
+        assert_eq!((line.state, line.retries), (ImportState::Failed, 3));
+        assert_eq!(line.retry_at, Some(at(100)));
     }
 }

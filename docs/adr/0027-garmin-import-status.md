@@ -1,6 +1,6 @@
 # ADR-0027: Garmin import status and give-up notification
 
-Status: accepted
+Status: accepted (retries added for #44)
 
 ## Context
 Issue #43. The 2026-11-16 01:00 archive stop was found only in the logs.
@@ -9,9 +9,9 @@ define the jobs and the chain that runs after each daily pull.
 
 ## Decision
 - Five jobs are reported: daily pull, missed days, one-year health import,
-  workout archive and daily archive. Each keeps its latest attempt (first try,
-  then retries from #44 later, oldest first), a `retry_at` and progress read
-  from its cursor. An attempt ends done, paused (deadline), capped (the
+  workout archive and daily archive. Each keeps its attempts in the current window
+  (first try, then retries, oldest first), a `retry_at`, a `next_retry` and
+  progress read from its cursor. An attempt ends done, paused (deadline), capped (the
   workout page limit; the next job still runs) or failed with one of ten
   reasons, each mapped from its source errors. The report enums have no
   unknown-variant fallback: a new outcome or reason needs every reader updated
@@ -24,7 +24,7 @@ define the jobs and the chain that runs after each daily pull.
   `domain`). Progress and the finish estimate are computed per request from the
   cursors. The records carry only enums, timestamps, dates and counts.
 - The dashboard reads it from `[dashboard] health_collector_url` and renders
-  `/imports`, a fifth nav page (ADR-0026). It shows only the latest attempt.
+  `/imports`, a fifth nav page (ADR-0026). It shows the latest attempt and how many retries ran before it in this window.
   An unreachable collector gives a notice and status 502; without
   `[health_collector]` the page says Garmin is not set up. The dashboard
   client reports a category only (unreachable, timeout, bad response). No
@@ -35,20 +35,54 @@ define the jobs and the chain that runs after each daily pull.
   The URL is parsed at startup, so a malformed value stops the alerter
   (ADR-0012). A failed poll logs a category only and affects nothing but the
   import notification. Delivery, retry and saving follow ADR-0017 and ADR-0019.
-- A give-up is a job that stops and waits for the next scheduled pull:
+- Retries (#44). A chained job that stops because Garmin did not answer, had a
+  server error or answered badly (an unusable body or another non-session 4xx)
+  is retried. A rate-limit answer (427, 429) is not a bad answer: Garmin asked
+  the client to slow down, and retrying could lengthen the block. Login, disk,
+  unreadable or unsaved progress and publish failures wait for the next pull: a
+  retry would fail the same way, or the cause is not Garmin's. A new failure
+  reason must be classified explicitly.
+  - Retries start 5, 15 and 60 minutes after the failed attempt ends, 3 per job
+    per window, so each chained job has its own budget. After the third failed
+    retry the job gives up until the next pull. A catch-up page cap applies
+    per attempt.
+  - A retry is planned only when at least 6 minutes (one step plus the margin)
+    remain before the next pull. The cutoff limits when steps start, not when
+    they finish: no step is admitted inside the margin, and an admitted slow step
+    may finish past it.
+  - A retry re-runs only the failed job, in a new session through the same paced
+    adapter, then the chain goes on with the next job. Resuming repeats no
+    stored work (cursors, archive checks, same-stamp health days; ADR-0015).
+  - The 10:00 daily pull is not retried. A failed pull leaves yesterday owed to
+    the gap fill at the next completed pull, the startup pull already covers
+    restarts, and a retried pull would publish `session_valid` again at another
+    stamp, which changes the login alert's input (ADR-0024).
+  - The retry budget and wake time are in memory. A collector restart starts a
+    fresh budget; this is accepted because restarts are rare and operator-driven,
+    and the pacer still applies.
+  - A health day skipped on a transport error, a 5xx or a malformed day keeps the
+    ADR-0023 behaviour: skipped and logged. It can remain missing, because the
+    gap fill does not generally revisit it apart from its rule for yesterday. A
+    follow-up is suggested.
+- A give-up is a job that stops and waits for the next scheduled pull, after
+  any retries:
   the daily pull ending throttled, session-failed or failed, or a chained job
   stopping, including a skip caused by an unreadable progress file (that job
   only; the chain continues). Done and paused are never give-ups. The pull
   loop fixes the scheduled pull before it starts and passes it as the deadline;
   `retry_at` is that time. It is set only when the failure ends before the
   deadline, so an overrunning pull, which the loop retries at once, sets none
-  and sends nothing.
+  and sends nothing. A job that will retry is not a give-up: `next_retry` holds
+  the instant of the planned retry, `retry_at` keeps its meaning and is never set
+  together with it, and the give-up signal stays "the last attempt failed and
+  `retry_at` is set". The report stays version 1 and `next_retry` is omitted
+  when unset.
 - The alerter sends one notification per give-up, keyed `(job, retry_at)`. It
   keeps only the newest delivered `retry_at` per job in the alert state as
   `garmin_imports` (additive, omitted when empty; no pruning). It accepts a
   give-up only when its `retry_at` is newer than that value and still in the
-  future, and checks again just before sending. A daily pull refused for its
-  login is not notified; ADR-0024 covers it. This amends ADR-0024: throttled
+  future, and checks again just before sending. The message says how many retries
+  failed. A daily pull refused for its login is not notified; ADR-0024 covers it. This amends ADR-0024: throttled
   and failed daily pulls now notify. A startup pull and a restart pull that
   fail the same day share one key.
 - The finish estimate uses a cost per job from how each runner paces. A health
@@ -79,14 +113,32 @@ define the jobs and the chain that runs after each daily pull.
 - A section on the Health page: one priority and one refresh period per page,
   and five cards would push the table below the fold on a phone.
 - Notifying from the collector: a second notifier and state, as ADR-0024 said.
+- Redefining `retry_at` as the next try with a separate give-up marker: an old
+  alerter would notify every failed try.
+- Retrying throttling or the daily pull, re-running the chain from its start, a
+  retry loop in the collector, and one retry budget per window.
 
 ## Rollout and rollback
+Upgrades from the version before #44 can go in any order; consumers first
+(`dashboard`, `alerter`, then `health-collector`) shows retries from the start.
+Per key: an old alerter stays silent during a backoff and alerts without a
+count; an old dashboard shows the next-pull message while a retry is pending;
+an old collector's alert and a new collector's give-up in the same window share
+a key, so the second is suppressed by design.
+
+Rolling back from #44 to the version before it can also happen in any order,
+with the keys still configured. The remove-the-keys-first rule below applies
+only when rolling back past the version that added them (#43).
+
 Both `health_collector_url` keys are optional. Every service parses the shared
 `config.toml` with `deny_unknown_fields`, so update every image first, then set
 either key if needed. Remove the keys before rolling any image back. No store
 change.
 
 ## Consequences
+- One failing job can hold the chain up to 80 minutes plus its runs, so later
+  jobs get less of the window. Runner WARN lines still say "resuming after the
+  next pull" when a retry follows.
 - After a collector restart a job shows "Not run yet" until the startup pull
   reaches it.
 - Accepted losses: a give-up notification can be lost when the collector

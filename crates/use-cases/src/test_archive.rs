@@ -1,6 +1,6 @@
 //! In-memory stand-ins for the archive ports, shared by the runner tests.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::io;
 use std::sync::Mutex;
@@ -31,17 +31,13 @@ pub(crate) const START: i64 = 1_000_000_000_000_000;
 
 /// The instant `window` after the start of the test clock.
 pub(crate) fn after(window: Duration) -> Timestamp {
-    let micros = i64::try_from(window.as_micros()).expect("fits");
-    Timestamp::from_micros(START + micros)
+    Timestamp::from_micros(START).saturating_add(window)
 }
 
 /// A clock that starts at `START` and follows the tokio clock.
 pub(crate) fn clock() -> impl Fn() -> Timestamp {
     let start = Instant::now();
-    move || {
-        let elapsed = i64::try_from(start.elapsed().as_micros()).expect("fits");
-        Timestamp::from_micros(START + elapsed)
-    }
+    move || Timestamp::from_micros(START).saturating_add(start.elapsed())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +66,12 @@ pub(crate) struct ScriptedSource {
     pub list_fails: bool,
     pub document_delay: Duration,
     pub opens: Mutex<usize>,
+    /// Outcomes of the first opens; later opens follow `open_fails`.
+    pub open_script: Mutex<VecDeque<Result<(), TestError>>>,
+    pub opened_at: Mutex<Vec<Instant>>,
+    /// What every day answers; empty unless a test opts in.
+    pub daily: DailyHealth,
+    pub days: Mutex<Vec<NaiveDate>>,
     pub requested: Mutex<Vec<(&'static str, DocumentKey)>>,
     pub script: Mutex<VecDeque<Result<Fetched, TestError>>>,
     pub list: Mutex<Vec<ActivityRef>>,
@@ -79,6 +81,18 @@ pub(crate) struct ScriptedSource {
 impl ScriptedSource {
     pub(crate) fn opens(&self) -> usize {
         *self.opens.lock().expect("lock")
+    }
+
+    pub(crate) fn opened_at(&self) -> Vec<Instant> {
+        self.opened_at.lock().expect("lock").clone()
+    }
+
+    pub(crate) fn days(&self) -> Vec<NaiveDate> {
+        self.days.lock().expect("lock").clone()
+    }
+
+    pub(crate) fn script_opens(&self, outcomes: impl IntoIterator<Item = Result<(), TestError>>) {
+        self.open_script.lock().expect("lock").extend(outcomes);
     }
 
     pub(crate) fn requested(&self) -> Vec<(&'static str, DocumentKey)> {
@@ -100,6 +114,11 @@ impl HealthProvider for ScriptedSource {
 
     async fn open(&self) -> Result<(), TestError> {
         *self.opens.lock().expect("lock") += 1;
+        self.opened_at.lock().expect("lock").push(Instant::now());
+        let scripted = self.open_script.lock().expect("lock").pop_front();
+        if let Some(outcome) = scripted {
+            return outcome;
+        }
         if self.open_fails {
             Err(TestError::Other)
         } else {
@@ -107,8 +126,9 @@ impl HealthProvider for ScriptedSource {
         }
     }
 
-    async fn daily(&self, _session: &(), _date: NaiveDate) -> Result<DailyHealth, TestError> {
-        Ok(DailyHealth::default())
+    async fn daily(&self, _session: &(), date: NaiveDate) -> Result<DailyHealth, TestError> {
+        self.days.lock().expect("lock").push(date);
+        Ok(self.daily)
     }
 
     fn is_session_error(error: &TestError) -> bool {
@@ -173,6 +193,7 @@ pub(crate) struct MemoryArchive {
     pub contains_fails: bool,
     pub put_fails: bool,
     pub(crate) entries: Mutex<HashMap<String, Stored>>,
+    pub(crate) puts: Mutex<usize>,
 }
 
 impl MemoryArchive {
@@ -190,6 +211,15 @@ impl MemoryArchive {
             .expect("seeding does not fail");
     }
 
+    /// How many writes succeeded; equal to `count()` when no key was written twice.
+    pub(crate) fn puts(&self) -> usize {
+        *self.puts.lock().expect("lock")
+    }
+
+    pub(crate) fn keys(&self) -> HashSet<String> {
+        self.entries.lock().expect("lock").keys().cloned().collect()
+    }
+
     pub(crate) fn count(&self) -> usize {
         self.entries.lock().expect("lock").len()
     }
@@ -198,6 +228,7 @@ impl MemoryArchive {
         if self.put_fails {
             return Err(io::Error::other("disk full"));
         }
+        *self.puts.lock().expect("lock") += 1;
         self.entries
             .lock()
             .expect("lock")

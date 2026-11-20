@@ -262,7 +262,7 @@ run order: Daily pull, Missed days (last 30), One-year health import, Workout
 archive, Daily archive. Each card has an `h3` with the job name and the badge
 at its right, line 1 in `.job-status` (`--text-base`), then optional
 `.secondary` lines (`--text-sm`, `--text-muted`, tabular): progress, finish
-time, next try. The view shows only the latest attempt.
+time, next try. The view shows the latest attempt and how many retries ran before it in this window.
 
 - Phone: one column, cards about 110 to 170 px tall. Desktop: three columns at
   `--page-max`, so five cards sit 3 + 2.
@@ -278,10 +278,18 @@ time, next try. The view shows only the latest attempt.
 | Done | `badge--neutral` "Up to date" | "Worked at {ended}: {counts}." |
 | Partial (done, some days failed) | `badge--neutral` "Partial" | "Worked at {ended}: {counts}." Never shown as "Up to date". |
 | Catching up (paused) | `badge--neutral` "Catching up" | "Paused at {ended}: {counts}." |
-| Failed | `badge--alert` "Failed" | "Failed at {ended}: {reason}" |
+| Retrying (failed, retry planned) | `badge--warn` "Retrying" | "Last try failed at {ended}: {reason}" |
+| Failed (gave up) | `badge--alert` "Failed" | "Failed at {ended}: {reason}" |
 
 Secondary lines, in this order, each only when it applies. A failed card
-shows its next try first, so the owner sees when it recovers before the detail:
+shows its next try first, so the owner sees when it recovers before the detail.
+The retry line comes next, or first on every other card:
+- Retry line, only when retries ran or one is planned (3 retries at most):
+  Retrying: "Retrying at {HH:MM} (retry {n} of 3)." with n the attempts so far,
+  in `--text` rather than muted (`.secondary--now`), as the one line to read.
+  Running: "Retry {n} of 3." Done: "Worked on retry {n}." Partial: "Partly worked
+  on retry {n}." Paused or capped: "Catching up after retry {n}." Gave up:
+  "1 retry failed." or "{n} retries failed."
 - Progress. Days with left > 0: "Up to {done_through} · {left} days left".
   Days with left 0: "Complete up to {done_through}". Workouts incomplete:
   "Walking the workout history". Workouts complete: "Workout history complete".

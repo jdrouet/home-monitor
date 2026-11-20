@@ -87,7 +87,12 @@ mod tests {
                 counts: ImportCounts::default(),
             }),
         };
-        status.record(ImportJob::Workouts, attempt, Timestamp::from_micros(100));
+        status.record(
+            ImportJob::Workouts,
+            attempt,
+            Timestamp::from_micros(100),
+            None,
+        );
         status
     }
 
@@ -116,6 +121,7 @@ mod tests {
             ImportJob::HealthHistory,
             running,
             Timestamp::from_micros(100),
+            None,
         );
         let (_sender, view) = view(status);
         let report = import_report::decode(&view.report(Timestamp::from_micros(50)))

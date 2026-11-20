@@ -31,10 +31,15 @@ pub(crate) enum Fit {
     SessionAge,
 }
 
+/// Whether a step started at `now` still fits before `until`.
+pub(crate) fn step_fits(until: Timestamp, now: Timestamp) -> bool {
+    until.duration_since(now) >= STEP_SPACING + MARGIN
+}
+
 /// Waits `STEP_SPACING` if a step fits before `until`, checking again after
 /// the wait so a late wake starts nothing.
 pub(crate) async fn turn(until: Timestamp, clock: &impl Fn() -> Timestamp) -> bool {
-    if until.duration_since(clock()) < STEP_SPACING + MARGIN {
+    if !step_fits(until, clock()) {
         return false;
     }
     sleep(STEP_SPACING).await;
@@ -61,7 +66,7 @@ pub(crate) async fn open_session<H: HealthProvider>(
             at: clock(),
         }),
         Err(error) => {
-            warn!(%error, "import session failed, resuming after the next pull");
+            warn!(%error, "import session failed");
             Err(RunEnd::Stopped(H::failure(&error)))
         }
     }

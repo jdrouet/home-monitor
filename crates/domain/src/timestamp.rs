@@ -24,6 +24,13 @@ impl Timestamp {
         Self(micros)
     }
 
+    /// `self` moved forward by `span`, stopping at the largest instant.
+    #[must_use]
+    pub fn saturating_add(self, span: Duration) -> Self {
+        let micros = i64::try_from(span.as_micros()).unwrap_or(i64::MAX);
+        Self(self.0.saturating_add(micros))
+    }
+
     /// Time elapsed since `earlier`; zero when `earlier` is not earlier.
     pub fn duration_since(self, earlier: Self) -> Duration {
         let micros = self.0.saturating_sub(earlier.0);
@@ -42,6 +49,19 @@ mod tests {
         let later = Timestamp::from_micros(3_000_000);
         let earlier = Timestamp::from_micros(1_000_000);
         assert_eq!(later.duration_since(earlier), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn saturating_add_moves_forward_and_stops_at_the_end() {
+        let start = Timestamp::from_micros(1_000_000);
+        assert_eq!(
+            start.saturating_add(Duration::from_secs(2)),
+            Timestamp::from_micros(3_000_000)
+        );
+        assert_eq!(
+            Timestamp::from_micros(i64::MAX).saturating_add(Duration::from_secs(1)),
+            Timestamp::from_micros(i64::MAX)
+        );
     }
 
     #[test]

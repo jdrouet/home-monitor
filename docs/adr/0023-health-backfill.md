@@ -1,6 +1,6 @@
 # ADR-0023: Garmin health backfill
 
-Status: accepted (runner shared with the gap fill by ADR-0024; window checks within a step amended by ADR-0025; per-day log amended for #39)
+Status: accepted (runner shared with the gap fill by ADR-0024; window checks within a step amended by ADR-0025; per-day log amended for #39; transient stops retried within the window by ADR-0027, #44)
 
 ## Context
 Issue #15. ADR-0008 promised a one-time, rate-limited backfill of one year of

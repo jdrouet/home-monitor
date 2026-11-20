@@ -9,6 +9,9 @@
 <article class="card">
 <h3>{{ card.name }}<span class="badge {{ card.badge_class }}">{{ card.badge }}</span></h3>
 <p class="job-status">{{ card.status }}</p>
+{% if let Some(pending) = card.pending %}
+<p class="secondary secondary--now">{{ pending }}</p>
+{% endif %}
 {% for detail in card.details %}
 <p class="secondary">{{ detail }}</p>
 {% endfor %}
