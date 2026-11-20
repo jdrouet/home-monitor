@@ -58,6 +58,8 @@ pub struct DashboardConfig {
     pub store_url: String,
     #[serde(default = "default_alerter_url")]
     pub alerter_url: String,
+    #[serde(default = "default_health_collector_url")]
+    pub health_collector_url: String,
 }
 
 fn default_alerter_url() -> String {
@@ -215,6 +217,21 @@ mod tests {
         );
         let config: Config = text.parse().expect("config is valid");
         assert_eq!(config.dashboard.alerter_url, "http://other:9000");
+    }
+
+    #[test]
+    fn dashboard_health_collector_url_defaults_and_can_be_set() {
+        let config: Config = EXAMPLE.parse().expect("example is valid");
+        assert_eq!(
+            config.dashboard.health_collector_url,
+            "http://health-collector:8080"
+        );
+        let text = EXAMPLE.replace(
+            "store_url = \"http://store:8080\"\n",
+            "store_url = \"http://store:8080\"\nhealth_collector_url = \"http://other:9000\"\n",
+        );
+        let config: Config = text.parse().expect("config is valid");
+        assert_eq!(config.dashboard.health_collector_url, "http://other:9000");
     }
 
     #[test]

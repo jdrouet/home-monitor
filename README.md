@@ -226,6 +226,25 @@ alert, an older alerter cannot read its state file and starts fresh, so
 rolling it back can resend first notifications, and an older dashboard shows
 "Alerts unavailable".
 
+### Garmin import status
+
+The dashboard's Imports page shows, for each Garmin job (daily pull, missed
+days, one-year import, workout archive, daily archive), what its last attempt
+did, how far it got and, when it failed, why and when it tries again. The
+health collector serves this from memory on its `http_listen` port, so after a
+restart a job reads "Not run yet" until the next pull reaches it. When a job
+gives up, `alerter` sends one ntfy notification naming the job and the time of
+the next try; a daily pull refused for its login is left to the login alert.
+The notification can be lost if the collector restarts or the alerter cannot
+reach it for more than a minute around the give-up
+([ADR-0027](docs/adr/0027-garmin-import-status.md)).
+
+Both `[dashboard] health_collector_url` and `[alerter] health_collector_url`
+are optional and default to `http://health-collector:8080`. Update every image
+first (`docker compose pull`, then `docker compose up -d`), and set either key
+only after the new images run: older images reject it. To roll back an image,
+remove the keys first.
+
 ### Adding temperature ranges to an existing install
 
 Older images reject the `min_temperature` and `max_temperature` keys, so update

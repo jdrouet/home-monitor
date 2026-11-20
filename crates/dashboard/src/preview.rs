@@ -5,15 +5,20 @@ use std::path::Path;
 
 use axum::response::Response;
 use chrono::{Days, NaiveDate};
-use domain::{AlertKind, MacAddress, Metric, RoomName, SourceId, Thermometer, Timestamp};
+use domain::{
+    AlertKind, AttemptEnd, AttemptOutcome, ImportAttempt, ImportCounts, ImportEta, ImportFailure,
+    ImportJob, ImportProgress, ImportStatus, MacAddress, Metric, RoomName, SourceId, Thermometer,
+    Timestamp,
+};
 use use_cases::{
     ActiveAlertLine, AlertSummary, ClimateReading, Freshness, HealthRow, HistoryChart,
-    HistorySelection, OutdoorOverview, Overview, Period, ResolvedAlertLine, RoomOverview,
-    SensorOverview,
+    HistorySelection, ImportSummary, OutdoorOverview, Overview, Period, ResolvedAlertLine,
+    RoomOverview, SensorOverview, build_import_summary,
 };
 
+use crate::imports_page::Imports;
 use crate::page::{at, read};
-use crate::{alerts_page, health_page, history_page, overview_page};
+use crate::{alerts_page, health_page, history_page, imports_page, overview_page};
 
 const ROOMS: [&str; 6] = [
     "Bedroom",
@@ -200,6 +205,142 @@ fn health_rows(with_figures: bool) -> Vec<HealthRow> {
         .collect()
 }
 
+fn ended(started: &str, finished: &str, outcome: AttemptOutcome, stored: u32) -> ImportAttempt {
+    ImportAttempt {
+        started: at(started),
+        ended: Some(AttemptEnd {
+            at: at(finished),
+            outcome,
+            counts: ImportCounts {
+                stored,
+                ..ImportCounts::default()
+            },
+        }),
+    }
+}
+
+fn running(started: &str) -> ImportAttempt {
+    ImportAttempt {
+        started: at(started),
+        ended: None,
+    }
+}
+
+fn days(done_through: (i32, u32, u32), left: u32) -> ImportProgress {
+    let (year, month, day) = done_through;
+    ImportProgress::Days {
+        done_through: NaiveDate::from_ymd_opt(year, month, day).expect("valid date"),
+        left,
+    }
+}
+
+/// The jobs as the collector reports them, `retry_at` being the pull a failed
+/// job waits for.
+fn import_status(
+    records: &[(ImportJob, ImportAttempt)],
+    extras: &[(ImportJob, ImportProgress, ImportEta)],
+) -> ImportSummary {
+    let next_pull = at("2026-01-16T09:00:00Z");
+    let mut status = ImportStatus {
+        next_pull: Some(next_pull),
+        ..ImportStatus::default()
+    };
+    for (job, attempt) in records {
+        status.record(*job, *attempt, next_pull);
+    }
+    for (job, progress, eta) in extras {
+        let entry = status.jobs.entry(*job).or_default();
+        entry.progress = Some(*progress);
+        entry.eta = Some(*eta);
+    }
+    build_import_summary(&status)
+}
+
+fn imports_mixed() -> ImportSummary {
+    import_status(
+        &[
+            (
+                ImportJob::DailyPull,
+                ended(
+                    "2026-01-15T09:00:00Z",
+                    "2026-01-15T09:01:00Z",
+                    AttemptOutcome::Done,
+                    2,
+                ),
+            ),
+            (
+                ImportJob::MissedDays,
+                ended(
+                    "2026-01-15T09:01:00Z",
+                    "2026-01-15T09:03:00Z",
+                    AttemptOutcome::Done,
+                    1,
+                ),
+            ),
+            (ImportJob::HealthHistory, running("2026-01-15T09:05:00Z")),
+            (
+                ImportJob::Workouts,
+                ended(
+                    "2026-01-15T00:00:00Z",
+                    "2026-01-15T00:10:00Z",
+                    AttemptOutcome::Failed(ImportFailure::GarminDown),
+                    150,
+                ),
+            ),
+        ],
+        &[
+            (
+                ImportJob::HealthHistory,
+                days((2025, 3, 11), 245),
+                ImportEta::At {
+                    at: at("2026-01-15T13:47:00Z"),
+                },
+            ),
+            (
+                ImportJob::Workouts,
+                ImportProgress::Workouts { complete: false },
+                ImportEta::Unknown,
+            ),
+        ],
+    )
+}
+
+fn imports_catching_up() -> ImportSummary {
+    import_status(
+        &[
+            (
+                ImportJob::HealthHistory,
+                ended(
+                    "2026-01-15T09:05:00Z",
+                    "2026-01-16T08:55:00Z",
+                    AttemptOutcome::Paused,
+                    1_400,
+                ),
+            ),
+            (ImportJob::Workouts, running("2026-01-15T09:05:00Z")),
+        ],
+        &[
+            (
+                ImportJob::HealthHistory,
+                days((2025, 9, 20), 118),
+                ImportEta::ImportDays { days: 1 },
+            ),
+            (
+                ImportJob::Workouts,
+                ImportProgress::Workouts { complete: false },
+                ImportEta::Unknown,
+            ),
+            (
+                ImportJob::DailyArchive,
+                days((2025, 1, 16), 359),
+                ImportEta::WaitsFor {
+                    job: ImportJob::HealthHistory,
+                },
+            ),
+        ],
+    )
+}
+
 fn write_bytes(root: &Path, relative: &str, contents: &[u8]) {
     let path = root.join(relative);
     fs::create_dir_all(path.parent().expect("path has a parent")).expect("directory is created");
@@ -222,8 +363,11 @@ async fn write_preview_pages() {
     let health = health_rows(true);
     let no_figures = health_rows(false);
     let weather_down = overview(Freshness::NotReporting);
+    let mixed = imports_mixed();
+    let catching_up = imports_catching_up();
+    let never_run = import_status(&[], &[]);
 
-    let pages: [(&str, Response); 15] = [
+    let pages: [(&str, Response); 20] = [
         (
             "index.html",
             overview_page::render(Some(&full), Some(&alerts(3)), day),
@@ -275,6 +419,26 @@ async fn write_preview_pages() {
             health_page::render(Some(&no_figures)),
         ),
         ("states/health-down.html", health_page::render(None)),
+        (
+            "imports/index.html",
+            imports_page::render(Imports::Report(&mixed), day),
+        ),
+        (
+            "states/imports-catching-up.html",
+            imports_page::render(Imports::Report(&catching_up), day),
+        ),
+        (
+            "states/imports-never-run.html",
+            imports_page::render(Imports::Report(&never_run), day),
+        ),
+        (
+            "states/imports-down.html",
+            imports_page::render(Imports::Unavailable, day),
+        ),
+        (
+            "states/imports-not-set-up.html",
+            imports_page::render(Imports::NotSetUp, day),
+        ),
     ];
     for (path, response) in pages {
         let (_, html) = read(response).await;

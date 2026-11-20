@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block meta %}<span>Updated {{ updated }}</span>{% endblock %}
+{% block content %}
+{% if let Some(cards) = cards %}
+<section>
+<h2 class="visually-hidden">Garmin jobs</h2>
+<div class="card-grid card-grid--jobs">
+{% for card in cards %}
+<article class="card">
+<h3>{{ card.name }}<span class="badge {{ card.badge_class }}">{{ card.badge }}</span></h3>
+<p class="job-status">{{ card.status }}</p>
+{% for detail in card.details %}
+<p class="secondary">{{ detail }}</p>
+{% endfor %}
+</article>
+{% endfor %}
+</div>
+</section>
+{% else if not_set_up %}
+<section>
+<p class="notice"><strong>Garmin is not set up.</strong> Add a [health_collector] section to config.toml, then log in.</p>
+</section>
+{% else %}
+<section>
+<p class="notice notice--warn"><span class="badge badge--warn">Unavailable</span> <strong>Import status unavailable.</strong> The health collector did not respond. This page retries every minute.</p>
+</section>
+{% endif %}
+{% endblock %}

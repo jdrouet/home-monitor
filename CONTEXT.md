@@ -48,6 +48,7 @@ location (latitude, longitude) is set in `config.toml`.
 - **History**: chart per metric, ranges 24 h / 7 d / 30 d / 1 y.
 - **Health**: Garmin daily metrics.
 - **Alerts**: active alerts and recent history.
+- **Imports**: what each Garmin job did, its progress and its failures.
 
 ## Testing
 

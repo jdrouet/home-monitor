@@ -14,6 +14,12 @@ pub fn paris_hour_minute(at: Timestamp) -> String {
     format_paris(at, "%H:%M")
 }
 
+/// `at` as `YYYY-MM-DD` on the Europe/Paris clock; `—` for an instant outside
+/// the calendar range.
+pub fn paris_day(at: Timestamp) -> String {
+    format_paris(at, "%Y-%m-%d")
+}
+
 fn format_paris(at: Timestamp, format: &str) -> String {
     DateTime::from_timestamp_micros(at.as_micros()).map_or_else(
         || "—".to_owned(),
@@ -26,7 +32,7 @@ mod tests {
     use chrono::DateTime;
     use domain::Timestamp;
 
-    use super::{paris_hour_minute, paris_time};
+    use super::{paris_day, paris_hour_minute, paris_time};
 
     fn at(rfc3339: &str) -> Timestamp {
         let instant = DateTime::parse_from_rfc3339(rfc3339).expect("valid instant");
@@ -46,6 +52,11 @@ mod tests {
     #[test]
     fn an_instant_out_of_range_does_not_panic() {
         assert_eq!(paris_time(Timestamp::from_micros(i64::MAX)), "—");
+    }
+
+    #[test]
+    fn the_day_is_the_paris_day() {
+        assert_eq!(paris_day(at("2026-07-15T23:30:00Z")), "2026-07-16");
     }
 
     #[test]

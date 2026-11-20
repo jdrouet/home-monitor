@@ -11,11 +11,18 @@ pub enum Page {
     History,
     Alerts,
     Health,
+    Imports,
 }
 
 impl Page {
     /// Every page, in navigation order.
-    pub const ALL: [Page; 4] = [Page::Overview, Page::History, Page::Alerts, Page::Health];
+    pub const ALL: [Page; 5] = [
+        Page::Overview,
+        Page::History,
+        Page::Alerts,
+        Page::Health,
+        Page::Imports,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -23,6 +30,7 @@ impl Page {
             Page::History => "History",
             Page::Alerts => "Alerts",
             Page::Health => "Health",
+            Page::Imports => "Imports",
         }
     }
 
@@ -32,13 +40,14 @@ impl Page {
             Page::History => "/history",
             Page::Alerts => "/alerts",
             Page::Health => "/health",
+            Page::Imports => "/imports",
         }
     }
 
     /// Seconds between reloads, or `None` for a page that never reloads.
     pub fn refresh_secs(self) -> Option<u32> {
         match self {
-            Page::Overview | Page::Alerts => Some(60),
+            Page::Overview | Page::Alerts | Page::Imports => Some(60),
             Page::Health => Some(300),
             Page::History => None,
         }
@@ -116,6 +125,7 @@ mod tests {
                 ("History", "/history", None),
                 ("Alerts", "/alerts", Some(60)),
                 ("Health", "/health", Some(300)),
+                ("Imports", "/imports", Some(60)),
             ]
         );
     }

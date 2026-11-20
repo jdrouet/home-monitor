@@ -30,6 +30,7 @@ mod history;
 mod import_copy;
 mod import_notification;
 mod import_progress;
+mod import_summary;
 mod import_window;
 mod latest_values;
 mod login_notification;
@@ -77,7 +78,9 @@ pub use health_provider::HealthProvider;
 pub use history::{
     HISTORY_METRICS, HistoryChart, HistorySelection, Period, build_history, history_query,
 };
+pub use import_copy::job_name;
 pub use import_progress::ImportCursors;
+pub use import_summary::{ImportLine, ImportState, ImportSummary, build_import_summary};
 pub use latest_values::LatestValues;
 pub use measurement_store::MeasurementStore;
 pub use notification::Notification;
