@@ -1,4 +1,6 @@
-use domain::{AttemptOutcome, ImportEta, ImportJob, ImportJobStatus, ImportStatus, Timestamp};
+use domain::{
+    AttemptOutcome, ImportCounts, ImportEta, ImportJob, ImportJobStatus, ImportStatus, Timestamp,
+};
 
 use crate::import_copy::{counts_text, failure_text, progress_text};
 
@@ -58,12 +60,11 @@ fn line(job: ImportJob, status: Option<&ImportJobStatus>) -> ImportLine {
     let latest = status.and_then(|status| status.attempts.last());
     let end = latest.and_then(|attempt| attempt.ended);
     let next_retry = status.and_then(|status| status.next_retry);
+    let counts = window_counts(status);
     let state = match end.map(|end| end.outcome) {
         _ if latest.is_none() => ImportState::NotRun,
         None => ImportState::Running,
-        Some(AttemptOutcome::Done) if end.is_some_and(|end| end.counts.failed > 0) => {
-            ImportState::Partial
-        }
+        Some(AttemptOutcome::Done) if counts.failed > 0 => ImportState::Partial,
         Some(AttemptOutcome::Done) => ImportState::Worked,
         Some(AttemptOutcome::Paused | AttemptOutcome::Capped) => ImportState::CatchingUp,
         Some(AttemptOutcome::Failed(_)) if next_retry.is_some() => ImportState::Retrying,
@@ -74,7 +75,7 @@ fn line(job: ImportJob, status: Option<&ImportJobStatus>) -> ImportLine {
         state,
         started: latest.map(|attempt| attempt.started),
         ended: end.map(|end| end.at),
-        counts: end.and_then(|end| counts_text(job, end.counts)),
+        counts: end.and_then(|_| counts_text(job, counts)),
         failure: match end.map(|end| end.outcome) {
             Some(AttemptOutcome::Failed(reason)) => Some(failure_text(reason)),
             _ => None,
@@ -85,6 +86,20 @@ fn line(job: ImportJob, status: Option<&ImportJobStatus>) -> ImportLine {
         retries: status.map_or(0, |status| status.attempts.len().saturating_sub(1)),
         next_retry,
     }
+}
+
+/// What every ended attempt of the window did, so a day skipped before a
+/// retry is not forgotten when the retry is clean.
+fn window_counts(status: Option<&ImportJobStatus>) -> ImportCounts {
+    status
+        .into_iter()
+        .flat_map(|status| &status.attempts)
+        .filter_map(|attempt| attempt.ended)
+        .fold(ImportCounts::default(), |sum, end| ImportCounts {
+            stored: sum.stored + end.counts.stored,
+            empty: sum.empty + end.counts.empty,
+            failed: sum.failed + end.counts.failed,
+        })
 }
 
 #[cfg(test)]
@@ -251,6 +266,43 @@ mod tests {
         }
         let line = build_import_summary(&status).lines.remove(3);
         assert_eq!((line.state, line.retries), (ImportState::Worked, 2));
+    }
+
+    #[test]
+    fn a_day_skipped_before_a_clean_retry_keeps_the_job_partial() {
+        let skipped = ImportCounts {
+            stored: 2,
+            failed: 1,
+            ..ImportCounts::default()
+        };
+        let attempt = |started, outcome, counts| ImportAttempt {
+            started: at(started),
+            ended: Some(AttemptEnd {
+                at: at(started + 1),
+                outcome,
+                counts,
+            }),
+        };
+        let mut status = ImportStatus::default();
+        status.record(
+            ImportJob::MissedDays,
+            attempt(
+                1,
+                AttemptOutcome::Failed(ImportFailure::Unreachable),
+                skipped,
+            ),
+            at(100),
+            Some(at(50)),
+        );
+        status.record(
+            ImportJob::MissedDays,
+            attempt(50, AttemptOutcome::Done, stored(3)),
+            at(100),
+            None,
+        );
+        let line = build_import_summary(&status).lines.remove(1);
+        assert_eq!(line.state, ImportState::Partial);
+        assert_eq!(line.counts.as_deref(), Some("5 stored, 1 skipped"));
     }
 
     #[test]

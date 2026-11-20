@@ -136,6 +136,10 @@ count; an old dashboard shows the next-pull message while a retry is pending;
 an old collector's alert and a new collector's give-up in the same window share
 a key, so the second is suppressed by design.
 
+Rolling back from #44 to the version before it can also happen in any order,
+with the keys still configured. The remove-the-keys-first rule below applies
+only when rolling back past the version that added them (#43).
+
 Both `health_collector_url` keys are optional. Every service parses the shared
 `config.toml` with `deny_unknown_fields`, so update every image first, then set
 either key if needed. Remove the keys before rolling any image back. No store

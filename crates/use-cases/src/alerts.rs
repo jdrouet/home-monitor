@@ -386,7 +386,9 @@ fn give_up(job: ImportJob, status: &ImportJobStatus) -> Option<(ImportFailure, T
     let AttemptOutcome::Failed(failure) = end.outcome else {
         return None;
     };
-    if (job, failure) == (ImportJob::DailyPull, ImportFailure::LoginRejected) {
+    if status.next_retry.is_some()
+        || (job, failure) == (ImportJob::DailyPull, ImportFailure::LoginRejected)
+    {
         return None;
     }
     Some((
@@ -1547,6 +1549,28 @@ mod tests {
         }
         assert_eq!(notifier.sent.borrow().len(), 1);
         assert!(notifier.messages()[0].contains("It retried 3 times."));
+    }
+
+    #[tokio::test]
+    async fn a_report_with_both_a_planned_retry_and_a_give_up_time_sends_nothing() {
+        let (notifier, store) = (FakeNotifier::new(), FakeStore::new());
+        let alerts = alerts(&store, 0);
+        let mut status = workouts_gave_up(10 * HOUR);
+        status
+            .jobs
+            .get_mut(&ImportJob::Workouts)
+            .expect("job")
+            .next_retry = Some(at(5 * MINUTE));
+        report(&alerts, &status, &notifier, &store, MINUTE).await;
+        assert!(notifier.sent.borrow().is_empty());
+        assert!(store.saved.borrow().is_empty());
+        status
+            .jobs
+            .get_mut(&ImportJob::Workouts)
+            .expect("job")
+            .next_retry = None;
+        report(&alerts, &status, &notifier, &store, 2 * MINUTE).await;
+        assert_eq!(notifier.sent.borrow().len(), 1);
     }
 
     #[tokio::test]
