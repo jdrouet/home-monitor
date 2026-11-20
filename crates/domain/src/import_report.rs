@@ -92,6 +92,13 @@ mod tests {
             },
         );
         status.jobs.insert(
+            ImportJob::MissedDays,
+            ImportJobStatus {
+                eta: Some(ImportEta::ImportDays { days: 1 }),
+                ..ImportJobStatus::default()
+            },
+        );
+        status.jobs.insert(
             ImportJob::HealthHistory,
             ImportJobStatus {
                 attempts: vec![ImportAttempt {
@@ -102,7 +109,9 @@ mod tests {
                     done_through: NaiveDate::from_ymd_opt(2026, 3, 10).unwrap(),
                     left: 245,
                 }),
-                eta: Some(ImportEta::ImportDays { days: 2 }),
+                eta: Some(ImportEta::At {
+                    at: at(15_190_000_000),
+                }),
                 ..ImportJobStatus::default()
             },
         );
@@ -123,7 +132,8 @@ mod tests {
         let expected = concat!(
             r#"{"version":1,"next_pull":100,"jobs":{"#,
             r#""daily_pull":{"attempts":[{"started":1,"ended":{"at":2,"outcome":"done","counts":{"stored":2}}}]},"#,
-            r#""health_history":{"attempts":[{"started":5}],"progress":{"kind":"days","done_through":"2026-03-10","left":245},"eta":{"kind":"import_days","days":2}},"#,
+            r#""missed_days":{"attempts":[],"eta":{"kind":"import_days","days":1}},"#,
+            r#""health_history":{"attempts":[{"started":5}],"progress":{"kind":"days","done_through":"2026-03-10","left":245},"eta":{"kind":"at","at":15190000000}},"#,
             r#""workouts":{"attempts":[{"started":3,"ended":{"at":4,"outcome":{"failed":"garmin_down"},"counts":{"stored":5,"failed":1}}}],"retry_at":100,"progress":{"kind":"workouts","complete":false},"eta":{"kind":"unknown"}},"#,
             r#""daily_archive":{"attempts":[],"eta":{"kind":"waits_for","job":"health_history"}}}}"#,
         );

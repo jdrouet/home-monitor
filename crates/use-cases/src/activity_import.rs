@@ -608,6 +608,28 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn a_failed_page_checkpoint_keeps_the_cursor_and_counts_the_archived_workouts() {
+        let (source, archive) = (source_with(0..7), MemoryArchive::default());
+        let pending = ActivityCursor {
+            pending: Some(0),
+            ..history(0)
+        };
+        let store = MemoryCursor {
+            save_fails: true,
+            ..MemoryCursor::holding(pending)
+        };
+        let stopped = outcome(&source, &archive, &store).await;
+        assert_eq!(
+            stopped.end,
+            RunEnd::Stopped(ImportFailure::ProgressNotSaved)
+        );
+        assert_eq!(stopped.counts, stored(5));
+        assert_eq!(source.pages(), [(0, 5)]);
+        assert_eq!(store.stored(), Some(pending));
+        assert!((0..5).all(|id| has(&archive, id)));
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn a_failed_first_save_stops_before_any_request() {
         let source = source_with(0..7);
         let store = MemoryCursor {
